@@ -139,6 +139,7 @@ function Authority({ t }) {
                 <th className="px-3 py-3">{t.dept}</th>
                 <th className="px-3 py-3">{t.priority}</th>
                 <th className="px-3 py-3">{t.score}</th>
+                <th className="px-3 py-3">{t.geminiUsed}</th>
                 <th className="px-3 py-3">{t.duplicate}</th>
                 <th className="px-3 py-3">{t.status}</th>
               </tr>
@@ -162,6 +163,9 @@ function Authority({ t }) {
                   <td className="px-3 py-3">{row.department}</td>
                   <td className="px-3 py-3">{row.priority}</td>
                   <td className="px-3 py-3">{row.score}</td>
+                  <td className="px-3 py-3 text-center font-black">
+                    {row.analysis_source === 'local' ? 0 : 1}
+                  </td>
                   <td className="px-3 py-3">
                     {row.duplicate_of ? `#${row.duplicate_of}` : '-'}
                   </td>

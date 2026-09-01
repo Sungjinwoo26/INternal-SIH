@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import re
 
 import numpy as np
 from dotenv import load_dotenv
@@ -20,78 +21,244 @@ model = genai.GenerativeModel("gemini-3.6-flash")
 
 COMMON_ISSUES = [
     {
-        "keywords": ["garbage", "trash", "waste", "कचरा"],
-        "department": "Sanitation",
-        "priority": "HIGH",
-        "score": 70,
-        "reasons": ["Uncollected waste creates a growing public health risk"],
-    },
-    {
-        "keywords": ["no electricity", "power outage", "बिजली", "वीज"],
-        "department": "Electricity",
-        "priority": "HIGH",
-        "score": 70,
-        "reasons": ["Electricity service interruption"],
-    },
-    {
-        "keywords": ["tree fell", "fallen tree", "झाड पड"],
+        "type": "gas_leak",
+        "keywords": ["gas leak", "smell of gas", "गैस रिसाव", "गॅस गळती"],
         "department": "Public Safety",
-        "priority": "CRITICAL",
-        "score": 88,
-        "reasons": ["Immediate risk to people and property"],
+        "score": 98,
+        "reasons": ["Immediate fire and public safety risk"],
     },
     {
-        "keywords": ["pipeline burst", "water pipe burst"],
+        "type": "pipeline_burst",
+        "keywords": ["pipeline burst", "water pipe burst", "road flooding"],
         "department": "Water",
-        "priority": "CRITICAL",
         "score": 92,
-        "reasons": ["Major water infrastructure failure and flooding risk"],
+        "reasons": ["Major infrastructure failure", "Flooding safety risk"],
     },
     {
-        "keywords": ["open manhole"],
-        "department": "Public Safety",
-        "priority": "CRITICAL",
-        "score": 95,
-        "reasons": ["Immediate accident and injury risk"],
-    },
-    {
-        "keywords": ["live wire", "hanging wire", "exposed wire"],
+        "type": "live_wire",
+        "keywords": ["live wire", "hanging wire", "electric wire exposed", "exposed wire"],
         "department": "Electricity",
-        "priority": "CRITICAL",
         "score": 95,
         "reasons": ["Immediate electrocution risk"],
     },
     {
-        "keywords": ["pothole"],
+        "type": "open_manhole",
+        "keywords": ["open manhole", "uncovered manhole", "खुला मैनहोल"],
+        "department": "Public Safety",
+        "score": 95,
+        "reasons": ["Immediate accident and injury risk"],
+    },
+    {
+        "type": "fallen_tree",
+        "keywords": ["tree fell", "fallen tree", "झाड पड", "पेड़ गिर"],
+        "department": "Public Safety",
+        "score": 88,
+        "reasons": ["Immediate risk to people and property"],
+    },
+    {
+        "type": "unsafe_building",
+        "keywords": ["building collapse", "building may collapse", "large wall crack"],
+        "department": "Public Safety",
+        "score": 90,
+        "reasons": ["Serious structural safety risk"],
+    },
+    {
+        "type": "fire",
+        "keywords": ["building on fire", "shop on fire", "electrical fire", "heavy smoke"],
+        "department": "Public Safety",
+        "score": 98,
+        "reasons": ["Immediate fire and life safety risk"],
+    },
+    {
+        "type": "contaminated_water",
+        "keywords": ["contaminated water", "dirty drinking water", "foul water supply"],
+        "department": "Water",
+        "score": 85,
+        "reasons": ["Unsafe water creates a serious health risk"],
+    },
+    {
+        "type": "no_water",
+        "keywords": ["no water supply", "water supply stopped", "पानी नहीं", "पाणी नाही"],
+        "department": "Water",
+        "score": 70,
+        "reasons": ["Essential water service interruption"],
+    },
+    {
+        "type": "water_leak",
+        "keywords": ["water leakage", "leaking water pipe", "tap leaking"],
+        "department": "Water",
+        "score": 55,
+        "reasons": ["Water loss and possible property damage"],
+    },
+    {
+        "type": "low_water_pressure",
+        "keywords": ["low water pressure", "weak water supply"],
+        "department": "Water",
+        "score": 35,
+        "reasons": ["Reduced water service quality"],
+    },
+    {
+        "type": "power_outage",
+        "keywords": ["no electricity", "power outage", "power cut", "बिजली नहीं", "वीज नाही"],
+        "department": "Electricity",
+        "score": 70,
+        "reasons": ["Electricity service interruption"],
+    },
+    {
+        "type": "transformer_fault",
+        "keywords": ["transformer sparks", "transformer smoking", "transformer blast"],
+        "department": "Electricity",
+        "score": 90,
+        "reasons": ["High-risk electrical equipment failure"],
+    },
+    {
+        "type": "streetlight_out",
+        "keywords": ["streetlight not working", "street light not working", "dark street"],
+        "department": "Electricity",
+        "score": 50,
+        "reasons": ["Poor visibility creates a local safety risk"],
+    },
+    {
+        "type": "pothole",
+        "keywords": ["pothole", "road has a hole", "सड़क में गड्ढा", "रस्त्यावर खड्डा"],
         "department": "Roads",
-        "priority": "MEDIUM",
         "score": 60,
         "reasons": ["Road safety and vehicle damage risk"],
     },
     {
-        "keywords": ["sewage overflow"],
+        "type": "damaged_road",
+        "keywords": ["road damaged", "broken road", "road surface damaged"],
+        "department": "Roads",
+        "score": 55,
+        "reasons": ["Damaged road affects safe travel"],
+    },
+    {
+        "type": "traffic_signal_fault",
+        "keywords": ["traffic signal not working", "traffic light broken"],
+        "department": "Public Safety",
+        "score": 75,
+        "reasons": ["Signal failure increases collision risk"],
+    },
+    {
+        "type": "garbage_collection",
+        "keywords": ["garbage not collected", "no garbage pickup", "uncollected garbage", "कचरा उचलला नाही"],
         "department": "Sanitation",
-        "priority": "HIGH",
+        "score": 55,
+        "reasons": ["Waste accumulation and health risk"],
+    },
+    {
+        "type": "illegal_dumping",
+        "keywords": ["illegal dumping", "garbage dumped", "waste dumped"],
+        "department": "Sanitation",
+        "score": 60,
+        "reasons": ["Dumped waste creates sanitation and access problems"],
+    },
+    {
+        "type": "sewage_overflow",
+        "keywords": ["sewage overflow", "sewer overflowing", "गटर ओवरफ्लो"],
+        "department": "Sanitation",
         "score": 80,
         "reasons": ["Sewage exposure creates a serious health risk"],
     },
+    {
+        "type": "blocked_drain",
+        "keywords": ["blocked drain", "clogged drain", "नाली बंद", "गटार तुंबले"],
+        "department": "Sanitation",
+        "score": 60,
+        "reasons": ["Blocked drainage can cause flooding and stagnant water"],
+    },
+    {
+        "type": "dead_animal",
+        "keywords": ["dead animal", "animal carcass"],
+        "department": "Sanitation",
+        "score": 70,
+        "reasons": ["Decomposition creates sanitation and disease risk"],
+    },
+    {
+        "type": "mosquito_breeding",
+        "keywords": ["mosquito breeding", "many mosquitoes", "stagnant water mosquitoes"],
+        "department": "Health",
+        "score": 75,
+        "reasons": ["Mosquito breeding increases disease risk"],
+    },
+    {
+        "type": "food_poisoning",
+        "keywords": ["food poisoning", "people sick after eating", "unsafe food"],
+        "department": "Health",
+        "score": 90,
+        "reasons": ["Possible foodborne illness requires urgent attention"],
+    },
+    {
+        "type": "aggressive_stray_animal",
+        "keywords": ["aggressive stray dog", "stray dog attack", "dog biting people"],
+        "department": "Public Safety",
+        "score": 75,
+        "reasons": ["Immediate bite and public safety risk"],
+    },
 ]
+
+DANGER_TERMS = ["dangerous", "flooding", "accident", "life threatening"]
+SENSITIVE_PLACE_TERMS = ["school", "hospital", "crowded market", "market"]
+PROLONGED_TERMS = ["several days", "many days", "for days", "for a week"]
+
+
+def priority_for_score(score):
+    if score >= 85:
+        return "CRITICAL"
+    if score >= 70:
+        return "HIGH"
+    if score >= 45:
+        return "MEDIUM"
+    return "LOW"
+
+
+def match_common_issue(text):
+    """Return a confident catalog match, or None when Gemini is needed."""
+    normalized = text.lower()
+    for issue in COMMON_ISSUES:
+        if any(keyword in normalized for keyword in issue["keywords"]):
+            return issue
+    return None
+
+
+def apply_local_adjustments(text, base_score, reasons):
+    normalized = text.lower()
+    score = base_score
+    adjusted_reasons = list(reasons)
+
+    if any(term in normalized for term in DANGER_TERMS):
+        score += 15
+        adjusted_reasons.append("Danger or accident language increases urgency")
+    if any(term in normalized for term in SENSITIVE_PLACE_TERMS):
+        score += 10
+        adjusted_reasons.append("School, hospital, or crowded area may be affected")
+    if any(term in normalized for term in PROLONGED_TERMS) or re.search(
+        r"\bfor\s+\d+\s+days?\b", normalized
+    ):
+        score += 10
+        adjusted_reasons.append("Issue has continued for several days")
+
+    return min(score, 100), adjusted_reasons
 
 
 def classify_and_prioritize(text: str) -> dict:
     """
-    One Gemini call to classify the issue and assign a priority + score together.
-    The response must be valid JSON with exactly the required shape.
+    Classify common issues locally, with one Gemini call only as the fallback.
+    Gemini responses must be valid JSON with exactly the required shape.
     """
-    normalized = text.lower()
-    for issue in COMMON_ISSUES:
-        if any(keyword in normalized for keyword in issue["keywords"]):
-            return {
-                "department": issue["department"],
-                "priority": issue["priority"],
-                "score": issue["score"],
-                "reasons": issue["reasons"],
-            }
+    issue = match_common_issue(text)
+    if issue is not None:
+        score, reasons = apply_local_adjustments(
+            text, issue["score"], issue["reasons"]
+        )
+        return {
+            "department": issue["department"],
+            "priority": priority_for_score(score),
+            "score": score,
+            "reasons": reasons,
+            "source": "local",
+            "issue_type": issue["type"],
+        }
 
     prompt = f"""
 You are a civic grievance classifier.
@@ -158,6 +325,8 @@ Complaint text:
             "priority": data["priority"],
             "score": data["score"],
             "reasons": data["reasons"],
+            "source": "gemini",
+            "issue_type": None,
         }
     except Exception:
         # Safe fallback so the app never crashes if Gemini output is malformed.
@@ -166,6 +335,8 @@ Complaint text:
             "priority": "MEDIUM",
             "score": 50,
             "reasons": ["Auto-fallback classification"],
+            "source": "fallback",
+            "issue_type": None,
         }
 
 
@@ -210,6 +381,35 @@ def distance_metres(lat1, lng1, lat2, lng2):
     return earth_radius * 2 * math.atan2(math.sqrt(value), math.sqrt(1 - value))
 
 
+def find_local_duplicate(text, stored, lat, lng, radius_metres=500):
+    """Match the same catalog issue locally before requesting an embedding."""
+    issue = match_common_issue(text)
+    if issue is None or lat is None or lng is None:
+        return (None, 0)
+
+    closest_id = None
+    closest_distance = None
+    for complaint_id, stored_text, stored_type, stored_lat, stored_lng in stored:
+        if stored_lat is None or stored_lng is None:
+            continue
+
+        candidate = match_common_issue(stored_text)
+        candidate_type = stored_type or (candidate["type"] if candidate else None)
+        if candidate_type != issue["type"]:
+            continue
+
+        distance = distance_metres(lat, lng, stored_lat, stored_lng)
+        if distance <= radius_metres and (
+            closest_distance is None or distance < closest_distance
+        ):
+            closest_id = complaint_id
+            closest_distance = distance
+
+    if closest_id is not None:
+        return (closest_id, 1.0)
+    return (None, 0)
+
+
 def find_duplicate(new_vec, stored, lat, lng, threshold=0.85, radius_metres=500):
     """
     Compare the new vector against previously stored complaint embeddings.
@@ -244,6 +444,7 @@ def find_duplicate(new_vec, stored, lat, lng, threshold=0.85, radius_metres=500)
 if __name__ == "__main__":
     sample = "Water pipeline burst near a school causing severe flooding and health risk."
     result = classify_and_prioritize(sample)
-    vector = embed(sample)
     print(result)
-    print(len(vector))
+    if result["source"] != "local":
+        vector = embed(sample)
+        print(len(vector))

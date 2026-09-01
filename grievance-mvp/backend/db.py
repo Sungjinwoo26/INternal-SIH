@@ -32,6 +32,9 @@ def init_db():
                 status TEXT DEFAULT 'Open',
                 estimated_resolution_days INTEGER,
                 estimated_resolution_hours INTEGER,
+                analysis_source TEXT,
+                issue_type TEXT,
+                analysis_complete INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -75,6 +78,34 @@ def init_db():
             except sqlite3.OperationalError as error:
                 if "duplicate column name" not in str(error):
                     raise
+        if "analysis_source" not in columns:
+            try:
+                conn.execute("ALTER TABLE complaints ADD COLUMN analysis_source TEXT")
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+        if "issue_type" not in columns:
+            try:
+                conn.execute("ALTER TABLE complaints ADD COLUMN issue_type TEXT")
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+        if "analysis_complete" not in columns:
+            try:
+                conn.execute(
+                    "ALTER TABLE complaints ADD COLUMN analysis_complete INTEGER DEFAULT 0"
+                )
+                # Existing classified rows were complete before this marker existed.
+                conn.execute(
+                    """
+                    UPDATE complaints SET analysis_complete = 1
+                    WHERE department IS NOT NULL AND priority IS NOT NULL
+                      AND score IS NOT NULL
+                    """
+                )
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
         conn.commit()
     finally:
         conn.close()
@@ -98,6 +129,9 @@ def insert_complaint(data: dict) -> int:
         "embedding": json.dumps(embedding) if embedding is not None else None,
         "duplicate_of": data.get("duplicate_of"),
         "status": data.get("status", "Open"),
+        "analysis_source": data.get("analysis_source"),
+        "issue_type": data.get("issue_type"),
+        "analysis_complete": data.get("analysis_complete", 0),
     }
 
     conn = get_conn()
@@ -106,8 +140,9 @@ def insert_complaint(data: dict) -> int:
             """
             INSERT INTO complaints (
                 text, complainant_name, photo, lat, lng, address, department,
-                priority, score, reasons, embedding, duplicate_of, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                priority, score, reasons, embedding, duplicate_of, status,
+                analysis_source, issue_type, analysis_complete
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload["text"],
@@ -123,6 +158,9 @@ def insert_complaint(data: dict) -> int:
                 payload["embedding"],
                 payload["duplicate_of"],
                 payload["status"],
+                payload["analysis_source"],
+                payload["issue_type"],
+                payload["analysis_complete"],
             ),
         )
         conn.commit()
@@ -139,6 +177,7 @@ def get_all():
             SELECT id, text, complainant_name, lat, lng, address, department,
                    priority, score, reasons, duplicate_of, status,
                    estimated_resolution_days, estimated_resolution_hours,
+                   analysis_source, issue_type,
                    created_at,
                    CASE WHEN photo IS NULL THEN 0 ELSE 1 END AS has_photo
             FROM complaints
@@ -158,6 +197,7 @@ def get_one(cid):
             SELECT id, text, complainant_name, lat, lng, address, department,
                    priority, score, reasons, duplicate_of, status,
                    estimated_resolution_days, estimated_resolution_hours,
+                   analysis_source, issue_type,
                    created_at,
                    CASE WHEN photo IS NULL THEN 0 ELSE 1 END AS has_photo
             FROM complaints
@@ -227,6 +267,25 @@ def update_status(cid, status, estimated_days=None, estimated_hours=None):
         conn.close()
 
 
+def get_duplicate_candidates(exclude_id=None):
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, text, issue_type, lat, lng
+            FROM complaints
+            WHERE id != ?
+            """,
+            (exclude_id or -1,),
+        ).fetchall()
+        return [
+            (row["id"], row["text"], row["issue_type"], row["lat"], row["lng"])
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
+
 def get_pending_complaints():
     conn = get_conn()
     try:
@@ -234,7 +293,7 @@ def get_pending_complaints():
             """
             SELECT id, text, lat, lng FROM complaints
             WHERE department IS NULL OR priority IS NULL OR score IS NULL
-               OR embedding IS NULL
+               OR analysis_complete = 0
             ORDER BY id
             """
         ).fetchall()
@@ -274,7 +333,8 @@ def update_classification(cid, data):
         conn.execute(
             """
             UPDATE complaints
-            SET department = ?, priority = ?, score = ?, reasons = ?
+            SET department = ?, priority = ?, score = ?, reasons = ?,
+                analysis_source = ?, issue_type = ?
             WHERE id = ?
             """,
             (
@@ -282,6 +342,8 @@ def update_classification(cid, data):
                 data["priority"],
                 data["score"],
                 json.dumps(data["reasons"]),
+                data.get("source"),
+                data.get("issue_type"),
                 cid,
             ),
         )
@@ -296,10 +358,26 @@ def update_embedding(cid, embedding, duplicate_of):
         conn.execute(
             """
             UPDATE complaints
-            SET embedding = ?, duplicate_of = ?
+            SET embedding = ?, duplicate_of = ?, analysis_complete = 1
             WHERE id = ?
             """,
             (json.dumps(embedding), duplicate_of, cid),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def complete_local_analysis(cid, duplicate_of):
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE complaints
+            SET duplicate_of = ?, analysis_complete = 1
+            WHERE id = ?
+            """,
+            (duplicate_of, cid),
         )
         conn.commit()
     finally:

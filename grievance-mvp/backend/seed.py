@@ -21,12 +21,16 @@ with open("seed_data.csv", "r", encoding="utf-8") as file:
         # Classify the complaint and assign department, priority, score, and reasons.
         result = ai.classify_and_prioritize(text)
 
-        # Create the embedding vector used for duplicate detection.
-        vec = ai.embed(text)
-
-        # Compare against already stored embeddings so duplicates link in insertion order.
-        stored = db.get_embeddings()
-        dup_id, _ = ai.find_duplicate(vec, stored, lat, lng)
+        if result["source"] == "local":
+            # Common issues use the fast local issue-type and distance check.
+            stored = db.get_duplicate_candidates()
+            dup_id, _ = ai.find_local_duplicate(text, stored, lat, lng)
+            vec = None
+        else:
+            # Unclear issues fall back to Gemini embeddings for semantic matching.
+            vec = ai.embed(text)
+            stored = db.get_embeddings()
+            dup_id, _ = ai.find_duplicate(vec, stored, lat, lng)
 
         # Insert the complaint with all AI-generated fields and any detected duplicate link.
         db.insert_complaint(
@@ -40,6 +44,9 @@ with open("seed_data.csv", "r", encoding="utf-8") as file:
                 "reasons": result["reasons"],
                 "embedding": vec,
                 "duplicate_of": dup_id,
+                "analysis_source": result["source"],
+                "issue_type": result["issue_type"],
+                "analysis_complete": 1,
             }
         )
 
