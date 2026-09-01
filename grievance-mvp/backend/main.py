@@ -1,6 +1,6 @@
 from threading import Thread
 
-from fastapi import FastAPI
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -23,12 +23,10 @@ app.add_middleware(
 def startup_event():
     # Ensure the SQLite complaints table exists before any API request is processed.
     db.init_db()
-
-
-class Complaint(BaseModel):
-    text: str
-    lat: float
-    lng: float
+    pending = db.get_pending_complaints()
+    if pending:
+        # Recover incomplete reports sequentially to avoid a burst of Gemini calls.
+        Thread(target=analyze_pending_complaints, args=(pending,), daemon=True).start()
 
 
 class StatusUpdate(BaseModel):
@@ -37,34 +35,51 @@ class StatusUpdate(BaseModel):
 
 def analyze_complaint(complaint_id, text):
     result = ai.classify_and_prioritize(text)
+    # Store visible AI fields before embedding, so quota failures cannot hide them.
+    db.update_classification(complaint_id, result)
+
     vec = ai.embed(text)
     stored = db.get_embeddings()
     dup_id, _ = ai.find_duplicate(vec, stored)
+    db.update_embedding(complaint_id, vec, dup_id)
 
-    db.update_analysis(
-        complaint_id,
-        {
-            "department": result["department"],
-            "priority": result["priority"],
-            "score": result["score"],
-            "reasons": result["reasons"],
-            "embedding": vec,
-            "duplicate_of": dup_id,
-        },
-    )
+
+def analyze_pending_complaints(complaints):
+    for complaint in complaints:
+        try:
+            analyze_complaint(complaint["id"], complaint["text"])
+        except Exception as error:
+            # Leave failed rows pending so another server restart can retry them.
+            print(f"Analysis retry failed for complaint #{complaint['id']}: {error}")
 
 
 @app.post("/submit")
-def submit_complaint(c: Complaint):
+async def submit_complaint(
+    text: str = Form(..., min_length=1),
+    complainant_name: str = Form(..., min_length=1),
+    lat: float | None = Form(None),
+    lng: float | None = Form(None),
+    address: str | None = Form(None),
+    photo: UploadFile | None = File(None),
+):
+    photo_bytes = await photo.read() if photo is not None else None
+
     # Save first so the citizen receives a permanent report ID immediately.
     complaint_id = db.insert_complaint(
-        {"text": c.text, "lat": c.lat, "lng": c.lng}
+        {
+            "text": text,
+            "complainant_name": complainant_name,
+            "lat": lat,
+            "lng": lng,
+            "address": address,
+            "photo": photo_bytes,
+        }
     )
 
     # Gemini analysis updates this same row without delaying the ID response.
     Thread(
         target=analyze_complaint,
-        args=(complaint_id, c.text),
+        args=(complaint_id, text),
         daemon=True,
     ).start()
 
@@ -108,4 +123,4 @@ def health_check():
 
 
 # Example curl request for testing the submit pipeline:
-# curl -X POST "http://localhost:8000/submit" -H "Content-Type: application/json" -d '{"text":"Water pipeline burst flooding the road and causing danger to nearby residents","lat":19.07,"lng":72.87}'
+# curl -X POST "http://localhost:8000/submit" -F "complainant_name=Demo User" -F "text=Water pipeline burst flooding the road" -F "lat=19.07" -F "lng=72.87"

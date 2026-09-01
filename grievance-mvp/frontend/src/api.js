@@ -3,7 +3,16 @@ import axios from 'axios'
 const BASE_URL = 'http://localhost:8000'
 
 export async function submit(data) {
-  const res = await axios.post(`${BASE_URL}/submit`, data)
+  const formData = new FormData()
+  formData.append('text', data.text)
+  formData.append('complainant_name', data.complainantName)
+
+  if (data.lat != null) formData.append('lat', data.lat)
+  if (data.lng != null) formData.append('lng', data.lng)
+  if (data.address) formData.append('address', data.address)
+  if (data.photo) formData.append('photo', data.photo)
+
+  const res = await axios.post(`${BASE_URL}/submit`, formData)
   return res.data
 }
 

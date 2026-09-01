@@ -1,116 +1,149 @@
 # AI Grievance Platform - Project Overview
 
-## 1. What This Project Does
+## What The Project Does
 
-This is a demo civic-complaint platform for citizens and local authorities. A citizen submits a complaint, the system uses AI to choose the responsible department and urgency, checks whether a similar complaint already exists, saves it, and returns a complaint ID. Citizens can later use that ID to check its status.
+This is a demo civic complaint platform for citizens and authorities. Citizens register their name, complaint, location, and an optional photo, receive an ID immediately, and later search that ID for the report details and AI result. Authorities see complaints in a score-ordered table, geographic heatmap, and department chart, and can update complaint status.
 
-Current status: the backend, demo data, frontend shell, and Citizen interface are implemented. The Authority dashboard is still a placeholder and is planned for Step 8.
-
-## 2. Technology Used
+## Technology
 
 | Area | Technology | Why it is used |
 | --- | --- | --- |
-| Frontend | React + Vite | Fast, simple frontend development and component-based UI |
-| Styling | Tailwind CSS CDN | Quick styling without Tailwind config or build setup |
-| HTTP calls | Axios | Connects the React frontend to the backend API |
-| Future dashboard | Leaflet, leaflet.heat, Recharts | Installed for the Step 8 map, heatmap, and charts; not used yet |
-| Backend | Python + FastAPI | Small, clear REST API with automatic request validation |
-| AI | Google Gemini | Classifies complaints, scores priority, and creates embeddings |
-| Similarity | NumPy cosine similarity | Compares complaint embeddings to find likely duplicates |
-| Database | SQLite | Lightweight local database suitable for an MVP demo |
-| Environment | python-dotenv | Loads `GEMINI_API_KEY` from `backend/.env` |
+| Frontend | React + Vite | Fast component-based interface and development server |
+| Styling | Tailwind CSS CDN | Simple responsive styling without configuration files |
+| API calls | Axios | Centralized communication with the FastAPI backend |
+| Dashboard | Leaflet, leaflet.heat, Recharts | Map markers, hotspots, and department chart |
+| Backend | Python + FastAPI | Small REST API with request validation |
+| Database | SQLite | Lightweight local storage for the MVP |
+| AI | Gemini `gemini-3.6-flash` | Multilingual department and priority analysis |
+| Fast classification | Local common-issue catalog | Instant zero-token results for frequent civic complaints |
+| Embeddings | Gemini `gemini-embedding-001` | Semantic duplicate detection |
+| Similarity | NumPy cosine similarity | Local comparison of stored embedding vectors |
+| Configuration | python-dotenv | Loads the local `GEMINI_API_KEY` from `.env` |
+| File uploads | FastAPI `UploadFile` + python-multipart | Receives the optional image through standard multipart form data |
 
-Backend Python imports require `fastapi`, `uvicorn`, `google-generativeai`, `numpy`, and `python-dotenv`. The current `requirements.txt` only records `fastapi` and `uvicorn`, so the other three may need to be installed manually.
+Backend dependencies are recorded in `backend/requirements.txt`. Frontend dependencies are recorded in `frontend/package.json`.
 
-## 3. How a Complaint Moves Through the System
+## Complaint Flow
 
-1. The citizen enters complaint text and clicks **Submit**.
-2. The browser requests the user's location. If permission is denied, Mumbai coordinates `19.07, 72.87` are used.
-3. React sends `text`, `lat`, and `lng` to `POST /submit` through `api.js`.
-4. Gemini returns one department, a priority, a score from 0-100, and short reasons.
-5. Gemini creates a 768-number text embedding representing the complaint's meaning.
-6. The backend compares that embedding with all stored embeddings using cosine similarity.
-7. A similarity of `0.85` or higher marks the complaint as a possible duplicate.
-8. SQLite stores the complaint, AI result, embedding, duplicate link, location, and default status `Open`.
-9. The frontend displays the complaint ID, classification, score, reasons, and any duplicate warning.
-10. A citizen can enter the ID later; `GET /status/{id}` returns its status and department.
+1. The citizen enters their name and writes a complaint in English, Hindi, or Marathi.
+2. They optionally select a photo and choose current location, manual latitude/longitude, or a typed address.
+3. React sends the fields and optional image as `multipart/form-data`.
+4. `POST /submit` saves the name, original text, location, and image bytes in SQLite first.
+5. The API immediately returns a permanent complaint ID with `Registered` state.
+6. A daemon worker checks the local common-issue catalog first.
+7. Common issues are classified instantly; unfamiliar issues go to Gemini.
+8. Classification fields are saved before duplicate processing.
+9. Gemini creates an embedding; NumPy compares it with stored embeddings.
+10. Similarity of `0.85` or higher links the report to the closest duplicate.
+11. Searching the ID shows `Registered - AI analysis is in progress` until classification arrives, then shows every report detail.
 
-## 4. AI Behavior
+## Reliability And Recovery
 
-Departments are limited to: **Water, Roads, Electricity, Sanitation, Public Safety, and Health**.
+Gemini generation and embedding calls have 30-second timeouts. Classification has a safe fallback of Public Safety, MEDIUM, score 50 if Gemini output is invalid. Classification is stored before embeddings, so an embedding quota error cannot leave department, priority, score, or reasons empty.
 
-Priorities are limited to: **CRITICAL, HIGH, MEDIUM, and LOW**. Gemini considers public safety, infrastructure failure, number of people affected, and health risk. Classification and scoring use one Gemini request to reduce API usage. If Gemini classification returns invalid data or fails, the system safely returns `Public Safety`, `MEDIUM`, score `50` instead of crashing. Embedding errors do not currently have a fallback.
+The local catalog handles common garbage, electricity outage, fallen tree, burst pipe, open manhole, live wire, pothole, and sewage complaints. It is used before Gemini because it is instant, predictable, costs no tokens, and reduces rate-limit pressure. Gemini remains the fallback for unfamiliar or ambiguous reports.
 
-Duplicate detection is semantic, so wording can differ while meaning stays similar. It runs locally after embeddings are created and links a new complaint to the closest existing complaint when the score reaches the `0.85` threshold.
+Whenever FastAPI starts, it finds rows missing department, priority, or score and processes them sequentially in one recovery thread. Sequential recovery avoids sending a burst of requests that could trigger Gemini rate limits. Failed rows remain pending and are retried after the next restart.
 
-## 5. Database
+## Location Features
 
-SQLite creates `backend/grievance.db` when the backend starts. The `complaints` table stores:
+- **Current Location:** uses browser geolocation; denied access falls back to Mumbai coordinates `19.07, 72.87`.
+- **Manual Coordinates:** stores latitude and longitude entered by the citizen.
+- **Typed Address:** stores the address exactly as entered without geocoding or extra APIs.
+- Address-only complaints appear in lists and ID tracking but not on the heatmap because they have no coordinates.
 
-`id`, `text`, `lat`, `lng`, `department`, `priority`, `score`, `reasons`, `embedding`, `duplicate_of`, `status`, and `created_at`.
+SQLite automatically adds the `address` column to older databases when the backend starts.
 
-Reasons and embeddings are stored as JSON text. Complaint lists are returned with the highest AI score first. Status starts as `Open` and can be changed through the status PATCH endpoint.
+## Multilingual Interface
 
-## 6. API Endpoints
+The React interface has local English, Hindi, and Marathi translations in `src/translations.js`. Headings, buttons, field labels, table headings, and status options switch instantly without an external translation API, cost, or delay. Complaint text is never translated or modified. Gemini is instructed to understand all three languages directly.
+
+## Citizen Interface
+
+- Registers complaint text with one of the three location methods.
+- Requires the complainant's name and accepts one optional image from the device.
+- Returns the complaint ID before AI processing finishes.
+- Tracks a complaint by ID.
+- Shows original text, address or coordinates, status, department, priority, score, reasons, and duplicate link.
+
+## Authority Dashboard
+
+- Heatmap and markers for complaints that have coordinates.
+- Bar chart showing complaint count per department.
+- All complaints ordered by score descending from the backend.
+- Table columns: ID, complaint, department, priority, score, duplicate, and status.
+- Status options: Open, In Progress, and Resolved.
+
+## Database
+
+SQLite creates `backend/grievance.db`. The `complaints` table stores:
+
+`id`, `text`, `complainant_name`, `photo`, `lat`, `lng`, `address`, `department`, `priority`, `score`, `reasons`, `embedding`, `duplicate_of`, `status`, and `created_at`.
+
+The photo is stored directly as a SQLite `BLOB`. API responses return only `has_photo`, not the image bytes, which keeps normal complaint requests small. Reasons and embeddings are JSON-encoded in SQLite. Status defaults to `Open`. The database now contains names, locations, and photos, so it is private local demo data and must not be committed publicly.
+
+## API Endpoints
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `GET` | `/` | Backend health check |
-| `POST` | `/submit` | Analyze, duplicate-check, and save a complaint |
+| `GET` | `/` | Health check |
+| `POST` | `/submit` | Register a report and start background analysis |
 | `GET` | `/complaints` | Return all complaints ordered by score |
-| `GET` | `/status/{id}` | Return one complaint or `{ "error": "not found" }` |
-| `PATCH` | `/status/{id}` | Update status using `{ "status": "..." }` |
-| `GET` | `/analytics` | Return complaint counts grouped by department |
+| `GET` | `/status/{id}` | Return every stored detail for one report |
+| `PATCH` | `/status/{id}` | Update complaint status |
+| `GET` | `/analytics` | Return counts grouped by department |
 
-CORS currently allows all origins because this is a local demo.
+CORS allows all origins because this is a local demo.
 
-## 7. Frontend Structure
+## Demo Data
 
-- `src/App.jsx`: Shows the title and switches between Citizen and Authority tabs using React state; no router is used.
-- `src/Citizen.jsx`: Submits complaints, shows AI feedback and duplicate warnings, and tracks status by ID.
-- `src/Authority.jsx`: Placeholder for the future dashboard.
-- `src/api.js`: Keeps all Axios calls in one place with base URL `http://localhost:8000`.
-- `index.html`: Loads Tailwind and Leaflet CSS from CDNs.
+`seed_data.csv` contains 20 Mumbai-area complaints across civic departments, including critical issues, geographic clusters, and near-duplicate pairs. `seed.py` sends them sequentially through the same Gemini and duplicate pipeline. Run it once; if Gemini returns `429`, add a short delay between rows.
 
-## 8. Demo Data
+## Main Decisions
 
-`backend/seed_data.csv` contains 20 Mumbai-area complaints across several departments, geographic hotspots, critical issues, and intentionally similar complaint pairs. `seed.py` sends every row through the real AI and duplicate pipeline before inserting it. Run it only once because repeating it creates repeated records. Gemini's free tier may return a `429` rate-limit error during seeding.
+- **Save before AI:** citizens receive an ID even when Gemini is slow or unavailable.
+- **Multipart upload:** sends normal fields and the optional image together in one standard request.
+- **SQLite BLOB:** stores the demo photo without adding a file-storage service or another dependency.
+- **Return `has_photo` only:** prevents large image data from slowing normal dashboard and tracking responses.
+- **Background worker:** AI processing does not block registration.
+- **Local common-issue catalog:** frequent complaints receive fast, zero-token classification.
+- **Store classification before embedding:** duplicate-service quota failures cannot hide visible analysis.
+- **Startup recovery:** interrupted reports do not remain permanently unanalyzed.
+- **Sequential recovery and seeding:** protects the limited Gemini quota.
+- **Embeddings instead of exact text matching:** finds complaints with similar meaning.
+- **SQLite:** minimal setup and reliable local demos.
+- **Local UI translations:** multilingual controls without another paid API.
+- **No address geocoding:** typed addresses remain free and unchanged.
+- **Plain React tab state:** avoids unnecessary routing dependencies.
+- **Local-only secrets:** `backend/.env` is ignored by Git and must never be committed.
 
-## 9. Main Design Decisions
+## Run The Project
 
-- **Simple MVP architecture:** React talks directly to FastAPI, and FastAPI talks to Gemini and SQLite.
-- **SQLite instead of a hosted database:** easier local setup and reliable demos.
-- **One AI classification call:** reduces cost and keeps department and priority reasoning consistent.
-- **Embeddings for duplicates:** catches similar meaning rather than only exact matching words.
-- **Sequential seeding:** preserves duplicate-link order and keeps behavior easy to understand.
-- **Plain tab state instead of routing:** only two demo views are needed.
-- **Real location with Mumbai fallback:** submissions still work when location access is denied.
-- **Central API helper:** endpoint details stay outside UI components.
+Create `backend/.env` locally:
 
-## 10. Running the Project
-
-Create `backend/.env` containing `GEMINI_API_KEY=your_key` and run these in separate terminals:
-
-```powershell
-cd backend
-uvicorn main:app --reload
+```env
+GEMINI_API_KEY=your_key
 ```
 
+Backend terminal:
+
 ```powershell
-cd frontend
+cd grievance-mvp/backend
+.\.venv\Scripts\Activate.ps1
+uvicorn main:app --reload --port 8000
+```
+
+Frontend terminal:
+
+```powershell
+cd grievance-mvp/frontend
 npm install
 npm run dev
 ```
 
-Backend: `http://localhost:8000`  
 Frontend: `http://localhost:5173`
+Backend docs: `http://localhost:8000/docs`
 
-Optional demo seeding, run once from `backend/`:
+## Current Limits
 
-```powershell
-python seed.py
-```
-
-## 11. Current Limitations
-
-This is intentionally a demo: there is no login, photo upload, advanced error UI, production CORS policy, or Authority dashboard yet. Status updates and analytics already exist in the API for the upcoming Authority interface.
+This is an MVP: no login, photo preview/download endpoint, address geocoding, production CORS policy, or durable external job queue. Background work uses local threads, so startup recovery is important after a server restart.

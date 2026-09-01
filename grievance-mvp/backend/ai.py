@@ -17,13 +17,85 @@ if api_key:
 model = genai.GenerativeModel("gemini-3.6-flash")
 
 
+COMMON_ISSUES = [
+    {
+        "keywords": ["garbage", "trash", "waste", "कचरा"],
+        "department": "Sanitation",
+        "priority": "HIGH",
+        "score": 70,
+        "reasons": ["Uncollected waste creates a growing public health risk"],
+    },
+    {
+        "keywords": ["no electricity", "power outage", "बिजली", "वीज"],
+        "department": "Electricity",
+        "priority": "HIGH",
+        "score": 70,
+        "reasons": ["Electricity service interruption"],
+    },
+    {
+        "keywords": ["tree fell", "fallen tree", "झाड पड"],
+        "department": "Public Safety",
+        "priority": "CRITICAL",
+        "score": 88,
+        "reasons": ["Immediate risk to people and property"],
+    },
+    {
+        "keywords": ["pipeline burst", "water pipe burst"],
+        "department": "Water",
+        "priority": "CRITICAL",
+        "score": 92,
+        "reasons": ["Major water infrastructure failure and flooding risk"],
+    },
+    {
+        "keywords": ["open manhole"],
+        "department": "Public Safety",
+        "priority": "CRITICAL",
+        "score": 95,
+        "reasons": ["Immediate accident and injury risk"],
+    },
+    {
+        "keywords": ["live wire", "hanging wire", "exposed wire"],
+        "department": "Electricity",
+        "priority": "CRITICAL",
+        "score": 95,
+        "reasons": ["Immediate electrocution risk"],
+    },
+    {
+        "keywords": ["pothole"],
+        "department": "Roads",
+        "priority": "MEDIUM",
+        "score": 60,
+        "reasons": ["Road safety and vehicle damage risk"],
+    },
+    {
+        "keywords": ["sewage overflow"],
+        "department": "Sanitation",
+        "priority": "HIGH",
+        "score": 80,
+        "reasons": ["Sewage exposure creates a serious health risk"],
+    },
+]
+
+
 def classify_and_prioritize(text: str) -> dict:
     """
     One Gemini call to classify the issue and assign a priority + score together.
     The response must be valid JSON with exactly the required shape.
     """
+    normalized = text.lower()
+    for issue in COMMON_ISSUES:
+        if any(keyword in normalized for keyword in issue["keywords"]):
+            return {
+                "department": issue["department"],
+                "priority": issue["priority"],
+                "score": issue["score"],
+                "reasons": issue["reasons"],
+            }
+
     prompt = f"""
 You are a civic grievance classifier.
+The complaint may be written in English, Hindi, or Marathi. Understand it
+directly without translating or changing the citizen's stored complaint text.
 Classify the complaint into exactly one department from:
 ["Water","Roads","Electricity","Sanitation","Public Safety","Health"]
 Assign a priority from:
