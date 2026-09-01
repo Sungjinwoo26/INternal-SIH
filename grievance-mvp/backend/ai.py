@@ -14,7 +14,7 @@ if api_key:
     genai.configure(api_key=api_key)
 
 # Reusable Gemini model instance for classification + priority scoring.
-model = genai.GenerativeModel("gemini-1.5-flash")
+model = genai.GenerativeModel("gemini-3.6-flash")
 
 
 def classify_and_prioritize(text: str) -> dict:
@@ -31,12 +31,12 @@ Assign a priority from:
 Assign a score from 0 to 100.
 Return valid JSON only, with no markdown fences and no extra explanation.
 Use this exact JSON shape:
-{
+{{
   "department": "Water",
   "priority": "HIGH",
   "score": 72,
   "reasons": ["short reason", "short reason"]
-}
+}}
 
 Consider these factors when scoring:
 - public safety risk
@@ -50,7 +50,7 @@ Complaint text:
 
     try:
         # One Gemini API call for both classification and priority.
-        response = model.generate_content(prompt)
+        response = model.generate_content(prompt, request_options={"timeout": 30})
 
         # Gemini may return fenced JSON like ```json ... ```; remove it before parsing.
         raw_text = response.text.strip()
@@ -98,10 +98,14 @@ Complaint text:
 
 def embed(text: str) -> list:
     """
-    Create a text embedding using Gemini text-embedding-004.
-    This returns a 768-dim vector (list of floats).
+    Create a text embedding using Gemini gemini-embedding-001.
+    This returns an embedding vector as a list of floats.
     """
-    result = genai.embed_content(model="models/text-embedding-004", content=text)
+    result = genai.embed_content(
+        model="models/gemini-embedding-001",
+        content=text,
+        request_options={"timeout": 30},
+    )
     return result["embedding"]
 
 

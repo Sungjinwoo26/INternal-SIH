@@ -1,3 +1,5 @@
+from threading import Thread
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -33,45 +35,40 @@ class StatusUpdate(BaseModel):
     status: str
 
 
-@app.post("/submit")
-def submit_complaint(c: Complaint):
-    # Step 1: classify the complaint and assign department, priority, score, and reasons.
-    result = ai.classify_and_prioritize(c.text)
-
-    # Step 2: create the text embedding for duplicate detection.
-    vec = ai.embed(c.text)
-
-    # Step 3: fetch all stored embeddings for similarity comparison.
+def analyze_complaint(complaint_id, text):
+    result = ai.classify_and_prioritize(text)
+    vec = ai.embed(text)
     stored = db.get_embeddings()
+    dup_id, _ = ai.find_duplicate(vec, stored)
 
-    # Step 4: compare to existing complaints and return the best duplicate candidate.
-    dup_id, similarity = ai.find_duplicate(vec, stored)
-
-    # Step 5: save the complaint record with duplicate_of set if a match was found.
-    complaint_id = db.insert_complaint(
+    db.update_analysis(
+        complaint_id,
         {
-            "text": c.text,
-            "lat": c.lat,
-            "lng": c.lng,
             "department": result["department"],
             "priority": result["priority"],
             "score": result["score"],
             "reasons": result["reasons"],
             "embedding": vec,
             "duplicate_of": dup_id,
-        }
+        },
     )
 
-    return {
-        "id": complaint_id,
-        "department": result["department"],
-        "priority": result["priority"],
-        "score": result["score"],
-        "reasons": result["reasons"],
-        "is_duplicate": dup_id is not None,
-        "similar_to": dup_id,
-        "similarity": similarity,
-    }
+
+@app.post("/submit")
+def submit_complaint(c: Complaint):
+    # Save first so the citizen receives a permanent report ID immediately.
+    complaint_id = db.insert_complaint(
+        {"text": c.text, "lat": c.lat, "lng": c.lng}
+    )
+
+    # Gemini analysis updates this same row without delaying the ID response.
+    Thread(
+        target=analyze_complaint,
+        args=(complaint_id, c.text),
+        daemon=True,
+    ).start()
+
+    return {"id": complaint_id, "status": "Registered"}
 
 
 @app.get("/complaints")

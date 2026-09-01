@@ -101,7 +101,10 @@ def get_one(cid):
         ).fetchone()
         if row is None:
             return None
-        return dict(row)
+        complaint = dict(row)
+        if complaint["reasons"] is not None:
+            complaint["reasons"] = json.loads(complaint["reasons"])
+        return complaint
     finally:
         conn.close()
 
@@ -126,6 +129,31 @@ def update_status(cid, status):
         conn.execute(
             "UPDATE complaints SET status = ? WHERE id = ?",
             (status, cid),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_analysis(cid, data):
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE complaints
+            SET department = ?, priority = ?, score = ?, reasons = ?,
+                embedding = ?, duplicate_of = ?
+            WHERE id = ?
+            """,
+            (
+                data["department"],
+                data["priority"],
+                data["score"],
+                json.dumps(data["reasons"]),
+                json.dumps(data["embedding"]),
+                data.get("duplicate_of"),
+                cid,
+            ),
         )
         conn.commit()
     finally:
