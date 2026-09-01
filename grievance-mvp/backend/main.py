@@ -1,5 +1,8 @@
-from fastapi import FastAPI
+from typing import Optional
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 import db
@@ -23,42 +26,75 @@ def startup_event():
     db.init_db()
 
 
-class Complaint(BaseModel):
-    text: str
-    lat: float
-    lng: float
-
-
 class StatusUpdate(BaseModel):
     status: str
 
 
 @app.post("/submit")
-def submit_complaint(c: Complaint):
+async def submit_complaint(
+    text: str = Form(...),
+    complainant_name: str = Form(...),
+    lat: Optional[float] = Form(None),
+    lng: Optional[float] = Form(None),
+    address: Optional[str] = Form(None),
+    photo: Optional[UploadFile] = File(None),
+):
+    photo_bytes = None
+    photo_content_type = None
+    if photo is not None:
+        if not photo.content_type or not photo.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="Photo must be an image")
+        photo_bytes = await photo.read()
+        photo_content_type = photo.content_type
+
     # Step 1: classify the complaint and assign department, priority, score, and reasons.
-    result = ai.classify_and_prioritize(c.text)
+    result = ai.classify_and_prioritize(text)
 
-    # Step 2: create the text embedding for duplicate detection.
-    vec = ai.embed(c.text)
+    if result["source"] == "local":
+        # Catalog issues can be matched cheaply by issue type plus nearby distance.
+        stored = db.get_duplicate_candidates()
+        dup_id, similarity = ai.find_local_duplicate(
+            text,
+            stored,
+            lat,
+            lng,
+            complainant_name,
+        )
+        vec = None
+    else:
+        # Unclear issues fall back to embeddings for semantic duplicate matching.
+        vec = ai.embed(text)
+        stored = db.get_embeddings()
+        dup_id, similarity = ai.find_duplicate(
+            vec,
+            stored,
+            lat,
+            lng,
+            complainant_name,
+        )
 
-    # Step 3: fetch all stored embeddings for similarity comparison.
-    stored = db.get_embeddings()
-
-    # Step 4: compare to existing complaints and return the best duplicate candidate.
-    dup_id, similarity = ai.find_duplicate(vec, stored)
+    if dup_id is not None:
+        result = ai.boost_duplicate_priority(result)
 
     # Step 5: save the complaint record with duplicate_of set if a match was found.
     complaint_id = db.insert_complaint(
         {
-            "text": c.text,
-            "lat": c.lat,
-            "lng": c.lng,
+            "text": text,
+            "complainant_name": complainant_name,
+            "photo": photo_bytes,
+            "photo_content_type": photo_content_type,
+            "lat": lat,
+            "lng": lng,
+            "address": address,
             "department": result["department"],
             "priority": result["priority"],
             "score": result["score"],
             "reasons": result["reasons"],
             "embedding": vec,
             "duplicate_of": dup_id,
+            "analysis_source": result["source"],
+            "issue_type": result["issue_type"],
+            "analysis_complete": 1,
         }
     )
 
@@ -85,6 +121,15 @@ def get_status(cid: int):
     if complaint is None:
         return {"error": "not found"}
     return complaint
+
+
+@app.get("/complaints/{cid}/photo")
+def get_complaint_photo(cid: int):
+    photo = db.get_photo(cid)
+    if photo is None:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    photo_bytes, content_type = photo
+    return Response(content=photo_bytes, media_type=content_type)
 
 
 @app.patch("/status/{cid}")

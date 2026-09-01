@@ -1,5 +1,10 @@
 import { useEffect, useState, useRef } from 'react'
-import { getComplaints, setStatus, getAnalytics } from './api'
+import {
+  getComplaintPhotoUrl,
+  getComplaints,
+  setStatus,
+  getAnalytics,
+} from './api'
 import {
   BarChart,
   Bar,
@@ -136,6 +141,7 @@ function Authority({ t }) {
               <tr>
                 <th className="px-3 py-3">{t.id}</th>
                 <th className="px-3 py-3">{t.complaint}</th>
+                <th className="px-3 py-3">{t.photo}</th>
                 <th className="px-3 py-3">{t.dept}</th>
                 <th className="px-3 py-3">{t.priority}</th>
                 <th className="px-3 py-3">{t.score}</th>
@@ -160,6 +166,25 @@ function Authority({ t }) {
                   <tr key={row.id} className="border-b align-top">
                   <td className="px-3 py-3">{row.id}</td>
                   <td className="max-w-xs truncate px-3 py-3">{row.text}</td>
+                  <td className="w-32 min-w-32 px-3 py-3">
+                    {row.has_photo ? (
+                      <a
+                        href={getComplaintPhotoUrl(row.id)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block w-fit"
+                        aria-label={`${t.photo} #${row.id}`}
+                      >
+                        <img
+                          src={getComplaintPhotoUrl(row.id)}
+                          alt={`${t.photo} #${row.id}`}
+                          className="h-20 w-28 min-w-28 rounded-lg border border-gray-200 object-cover shadow-sm transition hover:scale-105"
+                        />
+                      </a>
+                    ) : (
+                      <span className="text-gray-400">{t.notAttached}</span>
+                    )}
+                  </td>
                   <td className="px-3 py-3">{row.department}</td>
                   <td className="px-3 py-3">{row.priority}</td>
                   <td className="px-3 py-3">{row.score}</td>

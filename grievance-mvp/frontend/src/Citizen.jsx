@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { submit, getStatus } from './api'
+import { getComplaintPhotoUrl, submit, getStatus } from './api'
 
 function Citizen({ t }) {
   const [citizenPage, setCitizenPage] = useState('complaint')
@@ -208,10 +208,7 @@ function Citizen({ t }) {
           {result && (
             <div className="mt-7 rounded-xl border-4 border-blue-300 bg-blue-800 p-6 text-white shadow-lg">
               <p className="text-3xl font-black md:text-4xl">
-                {t.complaintRegistered}
-              </p>
-              <p className="mt-2 text-lg font-bold text-blue-100">
-                {t.registered}
+                {t.submitted}
               </p>
               <p className="mt-3 text-xl font-black">
                 {t.complaintId}: {result.id}
@@ -257,6 +254,20 @@ function Citizen({ t }) {
                 <p className="mt-2 font-bold text-gray-800">
                   {t.photo}: {tracked.has_photo ? t.attached : t.notAttached}
                 </p>
+                {tracked.has_photo && (
+                  <a
+                    href={getComplaintPhotoUrl(tracked.id)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-3 block w-fit"
+                  >
+                    <img
+                      src={getComplaintPhotoUrl(tracked.id)}
+                      alt={`${t.photo} #${tracked.id}`}
+                      className="max-h-96 w-auto max-w-full rounded-xl border-2 border-blue-200 object-contain shadow-sm"
+                    />
+                  </a>
+                )}
                 {tracked.department && (
                   <>
                     <p className="mt-2 font-bold text-gray-800">

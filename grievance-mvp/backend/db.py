@@ -20,6 +20,7 @@ def init_db():
                 text TEXT NOT NULL,
                 complainant_name TEXT,
                 photo BLOB,
+                photo_content_type TEXT,
                 lat REAL,
                 lng REAL,
                 address TEXT,
@@ -59,6 +60,14 @@ def init_db():
         if "photo" not in columns:
             try:
                 conn.execute("ALTER TABLE complaints ADD COLUMN photo BLOB")
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+        if "photo_content_type" not in columns:
+            try:
+                conn.execute(
+                    "ALTER TABLE complaints ADD COLUMN photo_content_type TEXT"
+                )
             except sqlite3.OperationalError as error:
                 if "duplicate column name" not in str(error):
                     raise
@@ -119,6 +128,7 @@ def insert_complaint(data: dict) -> int:
         "text": data["text"],
         "complainant_name": data.get("complainant_name"),
         "photo": data.get("photo"),
+        "photo_content_type": data.get("photo_content_type"),
         "lat": data.get("lat"),
         "lng": data.get("lng"),
         "address": data.get("address"),
@@ -139,15 +149,16 @@ def insert_complaint(data: dict) -> int:
         cursor = conn.execute(
             """
             INSERT INTO complaints (
-                text, complainant_name, photo, lat, lng, address, department,
+                text, complainant_name, photo, photo_content_type, lat, lng, address, department,
                 priority, score, reasons, embedding, duplicate_of, status,
                 analysis_source, issue_type, analysis_complete
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload["text"],
                 payload["complainant_name"],
                 payload["photo"],
+                payload["photo_content_type"],
                 payload["lat"],
                 payload["lng"],
                 payload["address"],
@@ -221,7 +232,7 @@ def get_embeddings(exclude_id=None):
         if exclude_id is None:
             rows = conn.execute(
                 """
-                SELECT id, embedding, lat, lng
+                SELECT id, embedding, lat, lng, complainant_name
                 FROM complaints
                 WHERE embedding IS NOT NULL
                 """
@@ -229,7 +240,7 @@ def get_embeddings(exclude_id=None):
         else:
             rows = conn.execute(
                 """
-                SELECT id, embedding, lat, lng
+                SELECT id, embedding, lat, lng, complainant_name
                 FROM complaints
                 WHERE embedding IS NOT NULL AND id != ?
                 """,
@@ -243,6 +254,7 @@ def get_embeddings(exclude_id=None):
                     json.loads(row["embedding"]),
                     row["lat"],
                     row["lng"],
+                    row["complainant_name"],
                 )
             )
         return result
@@ -267,19 +279,55 @@ def update_status(cid, status, estimated_days=None, estimated_hours=None):
         conn.close()
 
 
+def get_photo(cid):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT photo, photo_content_type FROM complaints WHERE id = ?",
+            (cid,),
+        ).fetchone()
+        if row is None or row["photo"] is None:
+            return None
+        photo = row["photo"]
+        content_type = row["photo_content_type"] or detect_photo_content_type(photo)
+        return photo, content_type
+    finally:
+        conn.close()
+
+
+def detect_photo_content_type(photo):
+    # Preserve display support for photos saved before MIME types were recorded.
+    if photo.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if photo.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if photo.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if photo.startswith(b"RIFF") and photo[8:12] == b"WEBP":
+        return "image/webp"
+    return "application/octet-stream"
+
+
 def get_duplicate_candidates(exclude_id=None):
     conn = get_conn()
     try:
         rows = conn.execute(
             """
-            SELECT id, text, issue_type, lat, lng
+            SELECT id, text, issue_type, lat, lng, complainant_name
             FROM complaints
             WHERE id != ?
             """,
             (exclude_id or -1,),
         ).fetchall()
         return [
-            (row["id"], row["text"], row["issue_type"], row["lat"], row["lng"])
+            (
+                row["id"],
+                row["text"],
+                row["issue_type"],
+                row["lat"],
+                row["lng"],
+                row["complainant_name"],
+            )
             for row in rows
         ]
     finally:

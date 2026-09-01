@@ -2,6 +2,10 @@ import axios from 'axios'
 
 const BASE_URL = 'http://localhost:8000'
 
+export function getComplaintPhotoUrl(id) {
+  return `${BASE_URL}/complaints/${id}/photo`
+}
+
 export async function submit(data) {
   const formData = new FormData()
   formData.append('text', data.text)

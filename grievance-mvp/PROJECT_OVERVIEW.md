@@ -68,7 +68,8 @@ The React interface has local English, Hindi, and Marathi translations in `src/t
 - The Citizen area separates File Complaint and Track Complaint into different full-width page views.
 - Registers complaint text with one of the three location methods.
 - Requires the complainant's name and accepts one optional image from the device.
-- Returns the complaint ID before AI processing finishes.
+- Returns the complaint ID after the current analyzer finishes and saves the report.
+- The Citizen submission confirmation displays `Submitted` with the complaint ID.
 - Tracks a complaint by ID.
 - Shows original text, address or coordinates, status, department, priority, score, reasons, and duplicate link.
 - Tracked name, complaint, status, department, and estimated time use separate highlighted information boxes.
@@ -146,7 +147,7 @@ These examples should display `0` in the Authority Gemini column because they ma
 - **No address geocoding:** typed addresses remain free and unchanged.
 - **Plain React tab state:** avoids unnecessary routing dependencies.
 - **Frontend page state:** separates the Citizen, Authority, complaint, and tracking experiences while keeping the MVP dependency-free.
-- **Color hierarchy:** blue identifies complaint actions, green identifies tracking actions, and light-blue panels emphasize important results.
+- **Color hierarchy:** a soft grey-to-blue page gradient provides depth, blue identifies complaint actions, green identifies tracking actions, and light-blue panels emphasize important results.
 - **Local-only secrets:** `backend/.env` is ignored by Git and must never be committed.
 
 ## Run The Project

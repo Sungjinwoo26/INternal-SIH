@@ -61,7 +61,7 @@ function App() {
   }
 
   return (
-    <main className="min-h-screen bg-white">
+    <main className="min-h-screen bg-gradient-to-br from-gray-100 via-blue-50 to-blue-200">
       <header className="bg-blue-800 px-5 py-6 text-white shadow-md md:px-10">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-5">
           <h1 className="text-4xl font-black tracking-tight md:text-5xl">

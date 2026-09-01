@@ -200,6 +200,7 @@ COMMON_ISSUES = [
 DANGER_TERMS = ["dangerous", "flooding", "accident", "life threatening"]
 SENSITIVE_PLACE_TERMS = ["school", "hospital", "crowded market", "market"]
 PROLONGED_TERMS = ["several days", "many days", "for days", "for a week"]
+DUPLICATE_PRIORITY_BONUS = 1
 
 
 def priority_for_score(score):
@@ -239,6 +240,39 @@ def apply_local_adjustments(text, base_score, reasons):
         adjusted_reasons.append("Issue has continued for several days")
 
     return min(score, 100), adjusted_reasons
+
+
+def normalize_complainant_name(name):
+    """Compare names loosely so minor spacing/casing differences do not matter."""
+    if not name:
+        return None
+    normalized = " ".join(name.strip().lower().split())
+    return normalized or None
+
+
+def is_different_complainant(new_name, existing_name):
+    """
+    Duplicate clustering should reflect multiple residents reporting the same issue.
+    Missing names cannot confidently prove a different complainant.
+    """
+    normalized_new = normalize_complainant_name(new_name)
+    normalized_existing = normalize_complainant_name(existing_name)
+    if normalized_new is None or normalized_existing is None:
+        return False
+    return normalized_new != normalized_existing
+
+
+def boost_duplicate_priority(result):
+    """Repeated nearby reports get a small urgency bump."""
+    boosted_score = min(int(result["score"]) + DUPLICATE_PRIORITY_BONUS, 100)
+    boosted_reasons = list(result["reasons"])
+    boosted_reasons.append("Repeated nearby reports from different citizens")
+    return {
+        **result,
+        "score": boosted_score,
+        "priority": priority_for_score(boosted_score),
+        "reasons": boosted_reasons,
+    }
 
 
 def classify_and_prioritize(text: str) -> dict:
@@ -381,7 +415,9 @@ def distance_metres(lat1, lng1, lat2, lng2):
     return earth_radius * 2 * math.atan2(math.sqrt(value), math.sqrt(1 - value))
 
 
-def find_local_duplicate(text, stored, lat, lng, radius_metres=500):
+def find_local_duplicate(
+    text, stored, lat, lng, complainant_name, radius_metres=500
+):
     """Match the same catalog issue locally before requesting an embedding."""
     issue = match_common_issue(text)
     if issue is None or lat is None or lng is None:
@@ -389,8 +425,17 @@ def find_local_duplicate(text, stored, lat, lng, radius_metres=500):
 
     closest_id = None
     closest_distance = None
-    for complaint_id, stored_text, stored_type, stored_lat, stored_lng in stored:
+    for (
+        complaint_id,
+        stored_text,
+        stored_type,
+        stored_lat,
+        stored_lng,
+        stored_name,
+    ) in stored:
         if stored_lat is None or stored_lng is None:
+            continue
+        if not is_different_complainant(complainant_name, stored_name):
             continue
 
         candidate = match_common_issue(stored_text)
@@ -410,7 +455,15 @@ def find_local_duplicate(text, stored, lat, lng, radius_metres=500):
     return (None, 0)
 
 
-def find_duplicate(new_vec, stored, lat, lng, threshold=0.85, radius_metres=500):
+def find_duplicate(
+    new_vec,
+    stored,
+    lat,
+    lng,
+    complainant_name,
+    threshold=0.85,
+    radius_metres=500,
+):
     """
     Compare the new vector against previously stored complaint embeddings.
     This runs locally with zero API cost.
@@ -424,8 +477,10 @@ def find_duplicate(new_vec, stored, lat, lng, threshold=0.85, radius_metres=500)
     if lat is None or lng is None:
         return (None, 0)
 
-    for complaint_id, vec, stored_lat, stored_lng in stored:
+    for complaint_id, vec, stored_lat, stored_lng, stored_name in stored:
         if stored_lat is None or stored_lng is None:
+            continue
+        if not is_different_complainant(complainant_name, stored_name):
             continue
         if distance_metres(lat, lng, stored_lat, stored_lng) > radius_metres:
             continue
