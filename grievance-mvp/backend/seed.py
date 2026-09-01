@@ -26,7 +26,7 @@ with open("seed_data.csv", "r", encoding="utf-8") as file:
 
         # Compare against already stored embeddings so duplicates link in insertion order.
         stored = db.get_embeddings()
-        dup_id, _ = ai.find_duplicate(vec, stored)
+        dup_id, _ = ai.find_duplicate(vec, stored, lat, lng)
 
         # Insert the complaint with all AI-generated fields and any detected duplicate link.
         db.insert_complaint(

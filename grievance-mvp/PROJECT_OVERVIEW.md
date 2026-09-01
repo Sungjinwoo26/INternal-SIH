@@ -17,7 +17,7 @@ This is a demo civic complaint platform for citizens and authorities. Citizens r
 | AI | Gemini `gemini-3.6-flash` | Multilingual department and priority analysis |
 | Fast classification | Local common-issue catalog | Instant zero-token results for frequent civic complaints |
 | Embeddings | Gemini `gemini-embedding-001` | Semantic duplicate detection |
-| Similarity | NumPy cosine similarity | Local comparison of stored embedding vectors |
+| Similarity | NumPy cosine similarity + Haversine distance | Matches meaning only when complaints are within 500 metres |
 | Configuration | python-dotenv | Loads the local `GEMINI_API_KEY` from `.env` |
 | File uploads | FastAPI `UploadFile` + python-multipart | Receives the optional image through standard multipart form data |
 
@@ -34,7 +34,7 @@ Backend dependencies are recorded in `backend/requirements.txt`. Frontend depend
 7. Common issues are classified instantly; unfamiliar issues go to Gemini.
 8. Classification fields are saved before duplicate processing.
 9. Gemini creates an embedding; NumPy compares it with stored embeddings.
-10. Similarity of `0.85` or higher links the report to the closest duplicate.
+10. The Haversine formula first keeps only complaints within 500 metres, then similarity of `0.85` or higher links the closest duplicate.
 11. Searching the ID shows `Registered - AI analysis is in progress` until classification arrives, then shows every report detail.
 
 ## Reliability And Recovery
@@ -51,6 +51,7 @@ Whenever FastAPI starts, it finds rows missing department, priority, or score an
 - **Manual Coordinates:** stores latitude and longitude entered by the citizen.
 - **Typed Address:** stores the address exactly as entered without geocoding or extra APIs.
 - Address-only complaints appear in lists and ID tracking but not on the heatmap because they have no coordinates.
+- Duplicate detection requires coordinates on both reports. Matching text beyond 500 metres, or reports with only typed addresses, are not marked as duplicates.
 
 SQLite automatically adds the `address` column to older databases when the backend starts.
 
@@ -73,12 +74,13 @@ The React interface has local English, Hindi, and Marathi translations in `src/t
 - All complaints ordered by score descending from the backend.
 - Table columns: ID, complaint, department, priority, score, duplicate, and status.
 - Status options: Open, In Progress, and Resolved.
+- Choosing In Progress reveals estimated resolution inputs for days and hours; citizens see the saved estimate when tracking the ID.
 
 ## Database
 
 SQLite creates `backend/grievance.db`. The `complaints` table stores:
 
-`id`, `text`, `complainant_name`, `photo`, `lat`, `lng`, `address`, `department`, `priority`, `score`, `reasons`, `embedding`, `duplicate_of`, `status`, and `created_at`.
+`id`, `text`, `complainant_name`, `photo`, `lat`, `lng`, `address`, `department`, `priority`, `score`, `reasons`, `embedding`, `duplicate_of`, `status`, `estimated_resolution_days`, `estimated_resolution_hours`, and `created_at`.
 
 The photo is stored directly as a SQLite `BLOB`. API responses return only `has_photo`, not the image bytes, which keeps normal complaint requests small. Reasons and embeddings are JSON-encoded in SQLite. Status defaults to `Open`. The database now contains names, locations, and photos, so it is private local demo data and must not be committed publicly.
 
@@ -111,6 +113,8 @@ CORS allows all origins because this is a local demo.
 - **Startup recovery:** interrupted reports do not remain permanently unanalyzed.
 - **Sequential recovery and seeding:** protects the limited Gemini quota.
 - **Embeddings instead of exact text matching:** finds complaints with similar meaning.
+- **500 m Haversine check:** prevents similar issues in different neighbourhoods from being linked and requires no map API.
+- **Stored resolution estimate:** keeps authority-entered days and hours available to citizen ID tracking.
 - **SQLite:** minimal setup and reliable local demos.
 - **Local UI translations:** multilingual controls without another paid API.
 - **No address geocoding:** typed addresses remain free and unchanged.

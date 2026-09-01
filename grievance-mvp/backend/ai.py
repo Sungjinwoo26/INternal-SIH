@@ -1,4 +1,5 @@
 import json
+import math
 import os
 
 import numpy as np
@@ -193,7 +194,23 @@ def cosine(a, b) -> float:
     return float(dot / (norm_a * norm_b))
 
 
-def find_duplicate(new_vec, stored, threshold=0.85):
+def distance_metres(lat1, lng1, lat2, lng2):
+    """Calculate straight-line distance between two coordinates."""
+    earth_radius = 6371000
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    lat_delta = math.radians(lat2 - lat1)
+    lng_delta = math.radians(lng2 - lng1)
+    value = (
+        math.sin(lat_delta / 2) ** 2
+        + math.cos(lat1_rad)
+        * math.cos(lat2_rad)
+        * math.sin(lng_delta / 2) ** 2
+    )
+    return earth_radius * 2 * math.atan2(math.sqrt(value), math.sqrt(1 - value))
+
+
+def find_duplicate(new_vec, stored, lat, lng, threshold=0.85, radius_metres=500):
     """
     Compare the new vector against previously stored complaint embeddings.
     This runs locally with zero API cost.
@@ -204,7 +221,15 @@ def find_duplicate(new_vec, stored, threshold=0.85):
     best_id = None
     best_sim = 0.0
 
-    for complaint_id, vec in stored:
+    if lat is None or lng is None:
+        return (None, 0)
+
+    for complaint_id, vec, stored_lat, stored_lng in stored:
+        if stored_lat is None or stored_lng is None:
+            continue
+        if distance_metres(lat, lng, stored_lat, stored_lng) > radius_metres:
+            continue
+
         sim = cosine(new_vec, vec)
         if sim > best_sim:
             best_sim = sim

@@ -2,7 +2,7 @@ from threading import Thread
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import db
 import ai
@@ -31,23 +31,30 @@ def startup_event():
 
 class StatusUpdate(BaseModel):
     status: str
+    estimated_days: int | None = Field(default=None, ge=0)
+    estimated_hours: int | None = Field(default=None, ge=0, le=23)
 
 
-def analyze_complaint(complaint_id, text):
+def analyze_complaint(complaint_id, text, lat, lng):
     result = ai.classify_and_prioritize(text)
     # Store visible AI fields before embedding, so quota failures cannot hide them.
     db.update_classification(complaint_id, result)
 
     vec = ai.embed(text)
-    stored = db.get_embeddings()
-    dup_id, _ = ai.find_duplicate(vec, stored)
+    stored = db.get_embeddings(exclude_id=complaint_id)
+    dup_id, _ = ai.find_duplicate(vec, stored, lat, lng)
     db.update_embedding(complaint_id, vec, dup_id)
 
 
 def analyze_pending_complaints(complaints):
     for complaint in complaints:
         try:
-            analyze_complaint(complaint["id"], complaint["text"])
+            analyze_complaint(
+                complaint["id"],
+                complaint["text"],
+                complaint["lat"],
+                complaint["lng"],
+            )
         except Exception as error:
             # Leave failed rows pending so another server restart can retry them.
             print(f"Analysis retry failed for complaint #{complaint['id']}: {error}")
@@ -79,7 +86,7 @@ async def submit_complaint(
     # Gemini analysis updates this same row without delaying the ID response.
     Thread(
         target=analyze_complaint,
-        args=(complaint_id, text),
+        args=(complaint_id, text, lat, lng),
         daemon=True,
     ).start()
 
@@ -101,7 +108,13 @@ def get_status(cid: int):
 
 @app.patch("/status/{cid}")
 def update_status(cid: int, payload: StatusUpdate):
-    db.update_status(cid, payload.status)
+    estimated_days = (
+        payload.estimated_days if payload.status == "In Progress" else None
+    )
+    estimated_hours = (
+        payload.estimated_hours if payload.status == "In Progress" else None
+    )
+    db.update_status(cid, payload.status, estimated_days, estimated_hours)
     return {"ok": True}
 
 

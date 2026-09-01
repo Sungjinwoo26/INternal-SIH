@@ -30,6 +30,8 @@ def init_db():
                 embedding TEXT,
                 duplicate_of INTEGER,
                 status TEXT DEFAULT 'Open',
+                estimated_resolution_days INTEGER,
+                estimated_resolution_hours INTEGER,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -54,6 +56,22 @@ def init_db():
         if "photo" not in columns:
             try:
                 conn.execute("ALTER TABLE complaints ADD COLUMN photo BLOB")
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+        if "estimated_resolution_days" not in columns:
+            try:
+                conn.execute(
+                    "ALTER TABLE complaints ADD COLUMN estimated_resolution_days INTEGER"
+                )
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+        if "estimated_resolution_hours" not in columns:
+            try:
+                conn.execute(
+                    "ALTER TABLE complaints ADD COLUMN estimated_resolution_hours INTEGER"
+                )
             except sqlite3.OperationalError as error:
                 if "duplicate column name" not in str(error):
                     raise
@@ -119,7 +137,9 @@ def get_all():
         rows = conn.execute(
             """
             SELECT id, text, complainant_name, lat, lng, address, department,
-                   priority, score, reasons, duplicate_of, status, created_at,
+                   priority, score, reasons, duplicate_of, status,
+                   estimated_resolution_days, estimated_resolution_hours,
+                   created_at,
                    CASE WHEN photo IS NULL THEN 0 ELSE 1 END AS has_photo
             FROM complaints
             ORDER BY score DESC
@@ -136,7 +156,9 @@ def get_one(cid):
         row = conn.execute(
             """
             SELECT id, text, complainant_name, lat, lng, address, department,
-                   priority, score, reasons, duplicate_of, status, created_at,
+                   priority, score, reasons, duplicate_of, status,
+                   estimated_resolution_days, estimated_resolution_hours,
+                   created_at,
                    CASE WHEN photo IS NULL THEN 0 ELSE 1 END AS has_photo
             FROM complaints
             WHERE id = ?
@@ -153,26 +175,52 @@ def get_one(cid):
         conn.close()
 
 
-def get_embeddings():
+def get_embeddings(exclude_id=None):
     conn = get_conn()
     try:
-        rows = conn.execute(
-            "SELECT id, embedding FROM complaints WHERE embedding IS NOT NULL"
-        ).fetchall()
+        if exclude_id is None:
+            rows = conn.execute(
+                """
+                SELECT id, embedding, lat, lng
+                FROM complaints
+                WHERE embedding IS NOT NULL
+                """
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, embedding, lat, lng
+                FROM complaints
+                WHERE embedding IS NOT NULL AND id != ?
+                """,
+                (exclude_id,),
+            ).fetchall()
         result = []
         for row in rows:
-            result.append((row["id"], json.loads(row["embedding"])))
+            result.append(
+                (
+                    row["id"],
+                    json.loads(row["embedding"]),
+                    row["lat"],
+                    row["lng"],
+                )
+            )
         return result
     finally:
         conn.close()
 
 
-def update_status(cid, status):
+def update_status(cid, status, estimated_days=None, estimated_hours=None):
     conn = get_conn()
     try:
         conn.execute(
-            "UPDATE complaints SET status = ? WHERE id = ?",
-            (status, cid),
+            """
+            UPDATE complaints
+            SET status = ?, estimated_resolution_days = ?,
+                estimated_resolution_hours = ?
+            WHERE id = ?
+            """,
+            (status, estimated_days, estimated_hours, cid),
         )
         conn.commit()
     finally:
@@ -184,7 +232,7 @@ def get_pending_complaints():
     try:
         rows = conn.execute(
             """
-            SELECT id, text FROM complaints
+            SELECT id, text, lat, lng FROM complaints
             WHERE department IS NULL OR priority IS NULL OR score IS NULL
                OR embedding IS NULL
             ORDER BY id

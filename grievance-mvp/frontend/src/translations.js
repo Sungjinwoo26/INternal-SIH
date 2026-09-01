@@ -43,6 +43,10 @@ const translations = {
     open: 'Open',
     inProgress: 'In Progress',
     resolved: 'Resolved',
+    estimatedResolution: 'Estimated resolution time',
+    days: 'Days',
+    hours: 'Hours',
+    save: 'Save',
   },
   hi: {
     appTitle: 'एआई शिकायत मंच',
@@ -88,6 +92,10 @@ const translations = {
     open: 'खुला',
     inProgress: 'प्रगति में',
     resolved: 'समाधान हुआ',
+    estimatedResolution: 'समाधान का अनुमानित समय',
+    days: 'दिन',
+    hours: 'घंटे',
+    save: 'सहेजें',
   },
   mr: {
     appTitle: 'एआय तक्रार मंच',
@@ -133,6 +141,10 @@ const translations = {
     open: 'उघडी',
     inProgress: 'प्रगतीत',
     resolved: 'निकाली',
+    estimatedResolution: 'निराकरणाचा अंदाजित वेळ',
+    days: 'दिवस',
+    hours: 'तास',
+    save: 'जतन करा',
   },
 }
 

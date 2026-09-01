@@ -14,6 +14,8 @@ import 'leaflet.heat'
 function Authority({ t }) {
   const [rows, setRows] = useState([])
   const [stats, setStats] = useState({})
+  const [statusDrafts, setStatusDrafts] = useState({})
+  const [estimateDrafts, setEstimateDrafts] = useState({})
   const mapRef = useRef(null)
   const mapObj = useRef(null)
 
@@ -62,8 +64,35 @@ function Authority({ t }) {
   }, [rows])
 
   async function handleStatusChange(id, status) {
-    // Save the new status, then reload both dashboard datasets from the backend.
-    await setStatus(id, status)
+    setStatusDrafts((current) => ({ ...current, [id]: status }))
+
+    if (status === 'In Progress') {
+      return
+    }
+
+    // Open and Resolved save immediately and clear any previous estimate.
+    await setStatus(id, status, null, null)
+    setStatusDrafts((current) => ({ ...current, [id]: undefined }))
+    setEstimateDrafts((current) => ({ ...current, [id]: undefined }))
+    await load()
+  }
+
+  function updateEstimate(id, field, value) {
+    setEstimateDrafts((current) => ({
+      ...current,
+      [id]: { ...current[id], [field]: value },
+    }))
+  }
+
+  async function saveInProgress(row) {
+    const draft = estimateDrafts[row.id] || {}
+    const days = Number(draft.days ?? row.estimated_resolution_days ?? 0)
+    const hours = Number(draft.hours ?? row.estimated_resolution_hours ?? 0)
+
+    // Save the status and its estimated resolution time together, then reload.
+    await setStatus(row.id, 'In Progress', days, hours)
+    setStatusDrafts((current) => ({ ...current, [row.id]: undefined }))
+    setEstimateDrafts((current) => ({ ...current, [row.id]: undefined }))
     await load()
   }
 
@@ -115,8 +144,19 @@ function Authority({ t }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} className="border-b">
+              {rows.map((row) => {
+                const selectedStatus = statusDrafts[row.id] ?? row.status
+                const days =
+                  estimateDrafts[row.id]?.days ??
+                  row.estimated_resolution_days ??
+                  0
+                const hours =
+                  estimateDrafts[row.id]?.hours ??
+                  row.estimated_resolution_hours ??
+                  0
+
+                return (
+                  <tr key={row.id} className="border-b align-top">
                   <td className="px-3 py-3">{row.id}</td>
                   <td className="max-w-xs truncate px-3 py-3">{row.text}</td>
                   <td className="px-3 py-3">{row.department}</td>
@@ -128,7 +168,7 @@ function Authority({ t }) {
                   <td className="px-3 py-3">
                     <select
                       className="rounded border border-gray-300 bg-white px-2 py-1"
-                      value={row.status}
+                      value={selectedStatus}
                       onChange={(event) =>
                         handleStatusChange(row.id, event.target.value)
                       }
@@ -137,9 +177,48 @@ function Authority({ t }) {
                       <option value="In Progress">{t.inProgress}</option>
                       <option value="Resolved">{t.resolved}</option>
                     </select>
+
+                    {selectedStatus === 'In Progress' && (
+                      <div className="mt-2 flex min-w-56 items-end gap-2">
+                        <label className="text-xs">
+                          {t.days}
+                          <input
+                            type="number"
+                            min="0"
+                            className="mt-1 block w-16 rounded border border-gray-300 px-2 py-1"
+                            value={days}
+                            onChange={(event) =>
+                              updateEstimate(row.id, 'days', event.target.value)
+                            }
+                          />
+                        </label>
+                        <label className="text-xs">
+                          {t.hours}
+                          <input
+                            type="number"
+                            min="0"
+                            max="23"
+                            className="mt-1 block w-16 rounded border border-gray-300 px-2 py-1"
+                            value={hours}
+                            onChange={(event) =>
+                              updateEstimate(row.id, 'hours', event.target.value)
+                            }
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="rounded bg-blue-600 px-3 py-1 font-medium text-white disabled:opacity-50"
+                          disabled={Number(days) + Number(hours) === 0}
+                          onClick={() => saveInProgress(row)}
+                        >
+                          {t.save}
+                        </button>
+                      </div>
+                    )}
                   </td>
-                </tr>
-              ))}
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

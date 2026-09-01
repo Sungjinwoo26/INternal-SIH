@@ -26,8 +26,12 @@ export async function getStatus(id) {
   return res.data
 }
 
-export async function setStatus(id, status) {
-  const res = await axios.patch(`${BASE_URL}/status/${id}`, { status })
+export async function setStatus(id, status, estimatedDays, estimatedHours) {
+  const res = await axios.patch(`${BASE_URL}/status/${id}`, {
+    status,
+    estimated_days: estimatedDays,
+    estimated_hours: estimatedHours,
+  })
   return res.data
 }
 

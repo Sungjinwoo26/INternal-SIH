@@ -228,6 +228,16 @@ function Citizen({ t }) {
                   <span className="font-semibold">{t.status}:</span>{' '}
                   {tracked.status}
                 </p>
+                {tracked.status === 'In Progress' &&
+                  tracked.estimated_resolution_days !== null && (
+                    <p>
+                      <span className="font-semibold">
+                        {t.estimatedResolution}:
+                      </span>{' '}
+                      {tracked.estimated_resolution_days} {t.days},{' '}
+                      {tracked.estimated_resolution_hours ?? 0} {t.hours}
+                    </p>
+                  )}
                 <p>
                   <span className="font-semibold">{t.department}:</span>{' '}
                   {tracked.department}
