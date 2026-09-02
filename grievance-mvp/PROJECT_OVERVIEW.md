@@ -28,25 +28,26 @@ Backend dependencies are recorded in `backend/requirements.txt`. Frontend depend
 1. The citizen enters their name and writes a complaint in English, Hindi, or Marathi.
 2. They optionally select a photo and choose current location, manual latitude/longitude, or a typed address.
 3. React sends the fields and optional image as `multipart/form-data`.
-4. `POST /submit` saves the name, original text, location, and image bytes in SQLite first.
-5. The API immediately returns a permanent complaint ID with `Registered` state.
-6. A daemon worker checks urgent phrases and the 25-issue local catalog first.
+4. `POST /submit` immediately stores the report and optional photo with status `Registered`.
+5. The API returns the permanent ID before classification or embedding calls begin.
+6. A FastAPI background task checks urgent phrases and the 25-issue local catalog.
 7. A catalog match receives its department, priority, score, reasons, issue type, and local score adjustments without Gemini.
 8. Local matches check for the same issue type within 500 metres and finish without creating an embedding.
-9. Unclear complaints fall back to Gemini for classification and a Gemini embedding for semantic duplicate detection.
-10. Classification fields are saved before duplicate processing.
-11. The Haversine formula always limits duplicate candidates to 500 metres.
-12. Searching the ID shows `Registered - AI analysis is in progress` until classification arrives, then shows every report detail.
+9. Unclear complaints fall back to Gemini, which first decides whether the text describes a meaningful civic complaint.
+10. Valid Gemini results receive classification and a Gemini embedding for semantic duplicate detection.
+11. Gibberish or meaningless reports receive no department, priority, score, embedding, or duplicate link.
+12. One final database update changes the status from `Registered` to `Open` or `Invalid` and saves all analysis fields together.
+13. The Haversine formula always limits duplicate candidates to 500 metres.
 
 ## Reliability And Recovery
 
-Gemini generation and embedding calls have 30-second timeouts. Classification has a safe fallback of Public Safety, MEDIUM, score 50 if Gemini output is invalid. Classification is stored before embeddings, so an embedding quota error cannot leave department, priority, score, or reasons empty.
+Gemini generation and embedding calls have 30-second timeouts. Classification has a safe fallback of Public Safety, MEDIUM, score 50 if Gemini returns malformed output. An embedding failure does not discard valid classification; the report still becomes `Open` without a duplicate link.
 
-The local catalog handles 25 common Water, Roads, Electricity, Sanitation, Public Safety, and Health issues. Urgent issues include gas leaks, burst pipelines, live wires, open manholes, fire, unsafe buildings, and transformer faults. It is used before Gemini because it is instant, predictable, costs no tokens, and reduces rate-limit pressure. Gemini remains the fallback for unfamiliar or ambiguous reports.
+The local catalog handles 25 common Water, Roads, Electricity, Sanitation, Public Safety, and Health issues. Urgent issues include gas leaks, burst pipelines, live wires, open manholes, fire, unsafe buildings, and transformer faults. It is used before Gemini because it is instant, predictable, costs no tokens, and reduces rate-limit pressure. Gemini remains the fallback for unfamiliar or ambiguous reports and rejects meaningless text instead of assigning invented civic details.
 
 Local scores add 15 points for danger, flooding, or accident language; 10 points for schools, hospitals, or crowded markets; and 10 points when the issue has continued for several days. Scores are capped at 100 and priority is derived from the adjusted score.
 
-Whenever FastAPI starts, it finds rows whose analysis is incomplete and processes them sequentially in one recovery thread. The `analysis_complete` marker is separate from embeddings because common local issues intentionally do not create embeddings. Sequential recovery avoids sending a burst of requests that could trigger Gemini rate limits. Failed rows remain pending and are retried after the next restart.
+FastAPI runs each analysis function after returning the registration response. On backend startup, one daemon recovery thread sequentially finishes any rows left incomplete by a shutdown. The `analysis_complete` marker is separate from embeddings because common local issues and invalid reports intentionally do not create embeddings.
 
 ## Location Features
 
@@ -68,10 +69,11 @@ The React interface has local English, Hindi, and Marathi translations in `src/t
 - The Citizen area separates File Complaint and Track Complaint into different full-width page views.
 - Registers complaint text with one of the three location methods.
 - Requires the complainant's name and accepts one optional image from the device.
-- Returns the complaint ID after the current analyzer finishes and saves the report.
+- Returns the complaint ID immediately with `Registered` status while analysis continues.
 - The Citizen submission confirmation displays `Submitted` with the complaint ID.
 - Tracks a complaint by ID.
 - Shows original text, address or coordinates, status, department, priority, score, reasons, and duplicate link.
+- Clearly shows `Invalid` for rejected text and hides department, priority, score, estimate, and duplicate details.
 - Tracked name, complaint, status, department, and estimated time use separate highlighted information boxes.
 
 ## Authority Dashboard
@@ -97,7 +99,7 @@ The photo is stored directly as a SQLite `BLOB`. API responses return only `has_
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | `GET` | `/` | Health check |
-| `POST` | `/submit` | Register a report and start background analysis |
+| `POST` | `/submit` | Register immediately and queue background analysis |
 | `GET` | `/complaints` | Return all complaints ordered by score |
 | `GET` | `/status/{id}` | Return every stored detail for one report |
 | `PATCH` | `/status/{id}` | Update complaint status |
@@ -116,6 +118,7 @@ CORS allows all origins because this is a local demo.
 | `There is a gas leak near my home` | CRITICAL | 98 |
 | `Water pipeline burst near a school and flooding the road` | CRITICAL | 100 |
 | `Live wire hanging over the street` | CRITICAL | 95 |
+| `Fire at my house help` | CRITICAL | 98 |
 | `Garbage not collected near the market` | MEDIUM | 65 |
 | `Garbage not collected near school for 3 days and it is dangerous` | CRITICAL | 90 |
 | `Pothole near the hospital for 4 days` | HIGH | 80 |
@@ -126,19 +129,21 @@ These examples should display `0` in the Authority Gemini column because they ma
 
 ## Main Decisions
 
-- **Save before AI:** citizens receive an ID even when Gemini is slow or unavailable.
+- **Save before AI:** returns a permanent ID immediately, even when Gemini is slow.
+- **Atomic final update:** classification fields and final status appear together after processing.
+- **FastAPI background task:** runs local/Gemini analysis after the registration response without adding a queue dependency.
+- **Startup recovery thread:** resumes incomplete `Registered` reports after an interrupted backend run.
 - **Multipart upload:** sends normal fields and the optional image together in one standard request.
 - **SQLite BLOB:** stores the demo photo without adding a file-storage service or another dependency.
 - **Return `has_photo` only:** prevents large image data from slowing normal dashboard and tracking responses.
-- **Background worker:** AI processing does not block registration.
 - **25-issue local catalog:** frequent complaints receive fast, zero-token classification.
 - **Confidence-based fallback:** a precise catalog phrase is handled locally; unmatched text is sent to Gemini.
+- **Gemini validity decision:** unmatched text is checked in context by Gemini instead of using fragile local gibberish rules; rejected reports remain searchable but receive no classification.
 - **Local score adjustments:** danger, sensitive locations, and long-running issues increase urgency predictably.
 - **Local duplicate first:** matching issue types within 500 metres link without a Gemini embedding.
 - **Separate completion marker:** local complaints can be complete even though they intentionally have no embedding.
 - **Store classification before embedding:** duplicate-service quota failures cannot hide visible analysis.
-- **Startup recovery:** interrupted reports do not remain permanently unanalyzed.
-- **Sequential recovery and seeding:** protects the limited Gemini quota.
+- **Sequential seeding:** protects the limited Gemini quota.
 - **Embeddings instead of exact text matching:** finds complaints with similar meaning.
 - **500 m Haversine check:** prevents similar issues in different neighbourhoods from being linked and requires no map API.
 - **Stored resolution estimate:** keeps authority-entered days and hours available to citizen ID tracking.
@@ -148,6 +153,7 @@ These examples should display `0` in the Authority Gemini column because they ma
 - **Plain React tab state:** avoids unnecessary routing dependencies.
 - **Frontend page state:** separates the Citizen, Authority, complaint, and tracking experiences while keeping the MVP dependency-free.
 - **Color hierarchy:** a soft grey-to-blue page gradient provides depth, blue identifies complaint actions, green identifies tracking actions, and light-blue panels emphasize important results.
+- **Shared footer:** the App shell renders one responsive, translated footer across Citizen, tracking, login, and Authority views without duplicated components.
 - **Local-only secrets:** `backend/.env` is ignored by Git and must never be committed.
 
 ## Run The Project
@@ -179,4 +185,4 @@ Backend docs: `http://localhost:8000/docs`
 
 ## Current Limits
 
-This is an MVP: no login, photo preview/download endpoint, address geocoding, production CORS policy, or durable external job queue. Background work uses local threads, so startup recovery is important after a server restart.
+This is an MVP: authority access is demo-only, addresses are not geocoded, CORS is open for local development, and background work uses the local process rather than a durable external job queue.

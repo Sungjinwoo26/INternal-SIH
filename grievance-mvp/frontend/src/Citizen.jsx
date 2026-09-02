@@ -1,5 +1,10 @@
-import { useState } from 'react'
-import { getComplaintPhotoUrl, submit, getStatus } from './api'
+import { useRef, useState } from 'react'
+import {
+  getComplaintPhotoUrl,
+  getResolutionPhotoUrl,
+  submit,
+  getStatus,
+} from './api'
 
 function Citizen({ t }) {
   const [citizenPage, setCitizenPage] = useState('complaint')
@@ -14,6 +19,21 @@ function Citizen({ t }) {
   const [address, setAddress] = useState('')
   const [trackId, setTrackId] = useState('')
   const [tracked, setTracked] = useState(null)
+  const photoInputRef = useRef(null)
+
+  function clearComplaintForm() {
+    setComplainantName('')
+    setText('')
+    setPhoto(null)
+    setLocationMode('current')
+    setLat('')
+    setLng('')
+    setAddress('')
+
+    if (photoInputRef.current) {
+      photoInputRef.current.value = ''
+    }
+  }
 
   async function submitReport(location) {
     try {
@@ -24,6 +44,7 @@ function Citizen({ t }) {
         ...location,
       })
       setResult(response)
+      clearComplaintForm()
     } finally {
       setLoading(false)
     }
@@ -130,6 +151,7 @@ function Citizen({ t }) {
             {t.photoOptional}
           </label>
           <input
+            ref={photoInputRef}
             type="file"
             accept="image/*"
             className="block w-full rounded-lg bg-white p-2 text-sm text-gray-700 file:mr-3 file:rounded-md file:border-0 file:bg-blue-700 file:px-4 file:py-2 file:font-bold file:text-white"
@@ -239,10 +261,30 @@ function Citizen({ t }) {
             </button>
           </div>
 
-          {tracked && !tracked.error && (
+          {tracked && !tracked.error && tracked.status === 'Invalid' && (
             <div className="mt-7 grid gap-4 md:grid-cols-2">
               <DetailBox label={t.complainantName} value={tracked.complainant_name || '-'} />
-              <DetailBox label={t.status} value={tracked.department ? tracked.status : t.registered} />
+              <InvalidDetailBox label={t.status} value={t.invalid} />
+              <DetailBox label={t.complaint} value={tracked.text} wide />
+              <div className="rounded-xl border-2 border-red-300 bg-red-50 p-5 md:col-span-2">
+                <p className="text-lg font-black text-red-800">
+                  {t.invalidComplaint}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {tracked && !tracked.error && tracked.status !== 'Invalid' && (
+            <div className="mt-7 grid gap-4 md:grid-cols-2">
+              <DetailBox label={t.complainantName} value={tracked.complainant_name || '-'} />
+              <DetailBox
+                label={t.status}
+                value={
+                  tracked.status === 'Registered'
+                    ? t.registered
+                    : tracked.status
+                }
+              />
               <DetailBox label={t.department} value={tracked.department || t.notAvailable} />
               <DetailBox label={t.estimatedResolution} value={estimate} />
               <DetailBox label={t.complaint} value={tracked.text} wide />
@@ -284,6 +326,27 @@ function Citizen({ t }) {
                   </p>
                 )}
               </div>
+
+              {tracked.status === 'Resolved' &&
+                tracked.has_resolution_photo && (
+                  <div className="rounded-xl border-2 border-green-300 bg-green-50 p-5 md:col-span-2">
+                    <p className="text-lg font-black text-green-900">
+                      {t.resolutionProof}
+                    </p>
+                    <a
+                      href={getResolutionPhotoUrl(tracked.id)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-3 block w-fit"
+                    >
+                      <img
+                        src={getResolutionPhotoUrl(tracked.id)}
+                        alt={`${t.resolutionProof} #${tracked.id}`}
+                        className="max-h-96 w-auto max-w-full rounded-xl border-2 border-green-300 object-contain shadow-sm"
+                      />
+                    </a>
+                  </div>
+                )}
             </div>
           )}
         </section>
@@ -303,6 +366,17 @@ function DetailBox({ label, value, wide = false }) {
         {label}
       </p>
       <p className="mt-2 text-xl font-black text-gray-950">{value}</p>
+    </div>
+  )
+}
+
+function InvalidDetailBox({ label, value }) {
+  return (
+    <div className="rounded-xl border-2 border-red-300 bg-red-100 p-5">
+      <p className="text-sm font-black uppercase tracking-wide text-red-800">
+        {label}
+      </p>
+      <p className="mt-2 text-2xl font-black text-red-950">{value}</p>
     </div>
   )
 }

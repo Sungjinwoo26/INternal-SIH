@@ -22,7 +22,11 @@ with open("seed_data.csv", "r", encoding="utf-8") as file:
         # Classify the complaint and assign department, priority, score, and reasons.
         result = ai.classify_and_prioritize(text)
 
-        if result["source"] == "local":
+        if not result.get("valid", True):
+            # Invalid rows remain trackable but receive no analysis or duplicate data.
+            dup_id = None
+            vec = None
+        elif result["source"] == "local":
             # Common issues use the fast local issue-type and distance check.
             stored = db.get_duplicate_candidates()
             dup_id, _ = ai.find_local_duplicate(
@@ -45,7 +49,7 @@ with open("seed_data.csv", "r", encoding="utf-8") as file:
                 complainant_name,
             )
 
-        if dup_id is not None:
+        if dup_id is not None and result.get("valid", True):
             result = ai.boost_duplicate_priority(result)
 
         # Insert the complaint with all AI-generated fields and any detected duplicate link.
@@ -61,6 +65,7 @@ with open("seed_data.csv", "r", encoding="utf-8") as file:
                 "reasons": result["reasons"],
                 "embedding": vec,
                 "duplicate_of": dup_id,
+                "status": "Open" if result.get("valid", True) else "Invalid",
                 "analysis_source": result["source"],
                 "issue_type": result["issue_type"],
                 "analysis_complete": 1,

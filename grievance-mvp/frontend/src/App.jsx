@@ -61,7 +61,7 @@ function App() {
   }
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-gray-100 via-blue-50 to-blue-200">
+    <main className="flex min-h-screen flex-col bg-gradient-to-br from-gray-100 via-blue-50 to-blue-200">
       <header className="bg-blue-800 px-5 py-6 text-white shadow-md md:px-10">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-5">
           <h1 className="text-4xl font-black tracking-tight md:text-5xl">
@@ -83,7 +83,7 @@ function App() {
         </div>
       </header>
 
-      <div className="mx-auto max-w-6xl px-5 py-7 md:px-10">
+      <div className="mx-auto w-full max-w-6xl flex-1 px-5 py-7 md:px-10">
         <nav className="mb-7 flex gap-3 border-b border-gray-200 pb-4">
           <button
             type="button"
@@ -183,6 +183,11 @@ function App() {
           </section>
         )}
       </div>
+
+      <footer className="border-t border-blue-700 bg-blue-950 px-5 py-5 text-center text-sm font-semibold text-blue-100">
+        <p>Grievance Platform</p>
+        <p className="mt-1 text-blue-300">{t.footerText}</p>
+      </footer>
     </main>
   )
 }

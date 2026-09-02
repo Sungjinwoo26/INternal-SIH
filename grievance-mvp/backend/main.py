@@ -1,6 +1,7 @@
+import threading
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -20,18 +21,82 @@ app.add_middleware(
 )
 
 
+def process_complaint(cid, text, lat, lng, complainant_name):
+    """Analyze one already-registered complaint and store its final state."""
+    result = ai.classify_and_prioritize(text)
+
+    if not result.get("valid", True):
+        db.complete_analysis(cid, result, status="Invalid")
+        return
+
+    embedding = None
+    duplicate_id = None
+
+    if result["source"] == "local":
+        stored = db.get_duplicate_candidates(exclude_id=cid)
+        duplicate_id, _ = ai.find_local_duplicate(
+            text,
+            stored,
+            lat,
+            lng,
+            complainant_name,
+        )
+    else:
+        try:
+            embedding = ai.embed(text)
+            stored = db.get_embeddings(exclude_id=cid)
+            duplicate_id, _ = ai.find_duplicate(
+                embedding,
+                stored,
+                lat,
+                lng,
+                complainant_name,
+            )
+        except Exception:
+            # Classification is still useful if the separate embedding call fails.
+            embedding = None
+            duplicate_id = None
+
+    if duplicate_id is not None:
+        result = ai.boost_duplicate_priority(result)
+
+    db.complete_analysis(
+        cid,
+        result,
+        embedding=embedding,
+        duplicate_of=duplicate_id,
+        status="Open",
+    )
+
+
+def recover_pending_complaints():
+    # Finish reports left as Registered if the backend stopped during analysis.
+    for complaint in db.get_pending_complaints():
+        process_complaint(
+            complaint["id"],
+            complaint["text"],
+            complaint["lat"],
+            complaint["lng"],
+            complaint["complainant_name"],
+        )
+
+
 @app.on_event("startup")
 def startup_event():
     # Ensure the SQLite complaints table exists before any API request is processed.
     db.init_db()
+    threading.Thread(target=recover_pending_complaints, daemon=True).start()
 
 
 class StatusUpdate(BaseModel):
     status: str
+    estimated_days: Optional[int] = None
+    estimated_hours: Optional[int] = None
 
 
 @app.post("/submit")
 async def submit_complaint(
+    background_tasks: BackgroundTasks,
     text: str = Form(...),
     complainant_name: str = Form(...),
     lat: Optional[float] = Form(None),
@@ -47,36 +112,7 @@ async def submit_complaint(
         photo_bytes = await photo.read()
         photo_content_type = photo.content_type
 
-    # Step 1: classify the complaint and assign department, priority, score, and reasons.
-    result = ai.classify_and_prioritize(text)
-
-    if result["source"] == "local":
-        # Catalog issues can be matched cheaply by issue type plus nearby distance.
-        stored = db.get_duplicate_candidates()
-        dup_id, similarity = ai.find_local_duplicate(
-            text,
-            stored,
-            lat,
-            lng,
-            complainant_name,
-        )
-        vec = None
-    else:
-        # Unclear issues fall back to embeddings for semantic duplicate matching.
-        vec = ai.embed(text)
-        stored = db.get_embeddings()
-        dup_id, similarity = ai.find_duplicate(
-            vec,
-            stored,
-            lat,
-            lng,
-            complainant_name,
-        )
-
-    if dup_id is not None:
-        result = ai.boost_duplicate_priority(result)
-
-    # Step 5: save the complaint record with duplicate_of set if a match was found.
+    # Save first so the citizen receives a permanent ID without waiting for AI.
     complaint_id = db.insert_complaint(
         {
             "text": text,
@@ -86,27 +122,31 @@ async def submit_complaint(
             "lat": lat,
             "lng": lng,
             "address": address,
-            "department": result["department"],
-            "priority": result["priority"],
-            "score": result["score"],
-            "reasons": result["reasons"],
-            "embedding": vec,
-            "duplicate_of": dup_id,
-            "analysis_source": result["source"],
-            "issue_type": result["issue_type"],
-            "analysis_complete": 1,
+            "status": "Registered",
+            "analysis_complete": 0,
         }
+    )
+
+    # FastAPI starts this task after sending the registration response.
+    background_tasks.add_task(
+        process_complaint,
+        complaint_id,
+        text,
+        lat,
+        lng,
+        complainant_name,
     )
 
     return {
         "id": complaint_id,
-        "department": result["department"],
-        "priority": result["priority"],
-        "score": result["score"],
-        "reasons": result["reasons"],
-        "is_duplicate": dup_id is not None,
-        "similar_to": dup_id,
-        "similarity": similarity,
+        "department": None,
+        "priority": None,
+        "score": None,
+        "reasons": [],
+        "is_duplicate": False,
+        "similar_to": None,
+        "similarity": 0,
+        "status": "Registered",
     }
 
 
@@ -132,9 +172,46 @@ def get_complaint_photo(cid: int):
     return Response(content=photo_bytes, media_type=content_type)
 
 
+@app.get("/complaints/{cid}/resolution-photo")
+def get_resolution_photo(cid: int):
+    photo = db.get_resolution_photo(cid)
+    if photo is None:
+        raise HTTPException(status_code=404, detail="Resolution photo not found")
+    photo_bytes, content_type = photo
+    return Response(content=photo_bytes, media_type=content_type)
+
+
 @app.patch("/status/{cid}")
 def update_status(cid: int, payload: StatusUpdate):
-    db.update_status(cid, payload.status)
+    db.update_status(
+        cid,
+        payload.status,
+        payload.estimated_days,
+        payload.estimated_hours,
+    )
+    return {"ok": True}
+
+
+@app.patch("/status/{cid}/resolve")
+async def resolve_complaint(
+    cid: int,
+    resolution_photo: Optional[UploadFile] = File(None),
+):
+    photo_bytes = None
+    content_type = None
+    if resolution_photo is not None:
+        if (
+            not resolution_photo.content_type
+            or not resolution_photo.content_type.startswith("image/")
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Resolution proof must be an image",
+            )
+        photo_bytes = await resolution_photo.read()
+        content_type = resolution_photo.content_type
+
+    db.resolve_complaint(cid, photo_bytes, content_type)
     return {"ok": True}
 
 

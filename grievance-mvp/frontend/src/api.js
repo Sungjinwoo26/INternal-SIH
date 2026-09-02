@@ -6,6 +6,10 @@ export function getComplaintPhotoUrl(id) {
   return `${BASE_URL}/complaints/${id}/photo`
 }
 
+export function getResolutionPhotoUrl(id) {
+  return `${BASE_URL}/complaints/${id}/resolution-photo`
+}
+
 export async function submit(data) {
   const formData = new FormData()
   formData.append('text', data.text)
@@ -36,6 +40,16 @@ export async function setStatus(id, status, estimatedDays, estimatedHours) {
     estimated_days: estimatedDays,
     estimated_hours: estimatedHours,
   })
+  return res.data
+}
+
+export async function resolveComplaint(id, resolutionPhoto) {
+  const formData = new FormData()
+  if (resolutionPhoto) {
+    formData.append('resolution_photo', resolutionPhoto)
+  }
+
+  const res = await axios.patch(`${BASE_URL}/status/${id}/resolve`, formData)
   return res.data
 }
 

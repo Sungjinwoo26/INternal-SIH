@@ -21,6 +21,8 @@ def init_db():
                 complainant_name TEXT,
                 photo BLOB,
                 photo_content_type TEXT,
+                resolution_photo BLOB,
+                resolution_photo_content_type TEXT,
                 lat REAL,
                 lng REAL,
                 address TEXT,
@@ -67,6 +69,22 @@ def init_db():
             try:
                 conn.execute(
                     "ALTER TABLE complaints ADD COLUMN photo_content_type TEXT"
+                )
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+        if "resolution_photo" not in columns:
+            try:
+                conn.execute(
+                    "ALTER TABLE complaints ADD COLUMN resolution_photo BLOB"
+                )
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+        if "resolution_photo_content_type" not in columns:
+            try:
+                conn.execute(
+                    "ALTER TABLE complaints ADD COLUMN resolution_photo_content_type TEXT"
                 )
             except sqlite3.OperationalError as error:
                 if "duplicate column name" not in str(error):
@@ -190,7 +208,9 @@ def get_all():
                    estimated_resolution_days, estimated_resolution_hours,
                    analysis_source, issue_type,
                    created_at,
-                   CASE WHEN photo IS NULL THEN 0 ELSE 1 END AS has_photo
+                   CASE WHEN photo IS NULL THEN 0 ELSE 1 END AS has_photo,
+                   CASE WHEN resolution_photo IS NULL THEN 0 ELSE 1 END
+                       AS has_resolution_photo
             FROM complaints
             ORDER BY score DESC
             """
@@ -210,7 +230,9 @@ def get_one(cid):
                    estimated_resolution_days, estimated_resolution_hours,
                    analysis_source, issue_type,
                    created_at,
-                   CASE WHEN photo IS NULL THEN 0 ELSE 1 END AS has_photo
+                   CASE WHEN photo IS NULL THEN 0 ELSE 1 END AS has_photo,
+                   CASE WHEN resolution_photo IS NULL THEN 0 ELSE 1 END
+                       AS has_resolution_photo
             FROM complaints
             WHERE id = ?
             """,
@@ -279,6 +301,35 @@ def update_status(cid, status, estimated_days=None, estimated_hours=None):
         conn.close()
 
 
+def resolve_complaint(cid, resolution_photo=None, content_type=None):
+    conn = get_conn()
+    try:
+        if resolution_photo is None:
+            conn.execute(
+                """
+                UPDATE complaints
+                SET status = 'Resolved', estimated_resolution_days = NULL,
+                    estimated_resolution_hours = NULL
+                WHERE id = ?
+                """,
+                (cid,),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE complaints
+                SET status = 'Resolved', estimated_resolution_days = NULL,
+                    estimated_resolution_hours = NULL,
+                    resolution_photo = ?, resolution_photo_content_type = ?
+                WHERE id = ?
+                """,
+                (resolution_photo, content_type, cid),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_photo(cid):
     conn = get_conn()
     try:
@@ -290,6 +341,27 @@ def get_photo(cid):
             return None
         photo = row["photo"]
         content_type = row["photo_content_type"] or detect_photo_content_type(photo)
+        return photo, content_type
+    finally:
+        conn.close()
+
+
+def get_resolution_photo(cid):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT resolution_photo, resolution_photo_content_type
+            FROM complaints WHERE id = ?
+            """,
+            (cid,),
+        ).fetchone()
+        if row is None or row["resolution_photo"] is None:
+            return None
+        photo = row["resolution_photo"]
+        content_type = row["resolution_photo_content_type"] or (
+            detect_photo_content_type(photo)
+        )
         return photo, content_type
     finally:
         conn.close()
@@ -339,13 +411,46 @@ def get_pending_complaints():
     try:
         rows = conn.execute(
             """
-            SELECT id, text, lat, lng FROM complaints
-            WHERE department IS NULL OR priority IS NULL OR score IS NULL
-               OR analysis_complete = 0
+            SELECT id, text, lat, lng, complainant_name FROM complaints
+            WHERE analysis_complete = 0
+               OR (
+                    status != 'Invalid'
+                    AND (department IS NULL OR priority IS NULL OR score IS NULL)
+               )
             ORDER BY id
             """
         ).fetchall()
         return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def complete_analysis(cid, data, embedding=None, duplicate_of=None, status="Open"):
+    """Store all final analysis fields and status in one database update."""
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE complaints
+            SET department = ?, priority = ?, score = ?, reasons = ?,
+                embedding = ?, duplicate_of = ?, status = ?,
+                analysis_source = ?, issue_type = ?, analysis_complete = 1
+            WHERE id = ?
+            """,
+            (
+                data.get("department"),
+                data.get("priority"),
+                data.get("score"),
+                json.dumps(data.get("reasons", [])),
+                json.dumps(embedding) if embedding is not None else None,
+                duplicate_of,
+                status,
+                data.get("source"),
+                data.get("issue_type"),
+                cid,
+            ),
+        )
+        conn.commit()
     finally:
         conn.close()
 

@@ -64,7 +64,18 @@ COMMON_ISSUES = [
     },
     {
         "type": "fire",
-        "keywords": ["building on fire", "shop on fire", "electrical fire", "heavy smoke"],
+        "keywords": [
+            "building on fire",
+            "house on fire",
+            "home on fire",
+            "fire at my house",
+            "fire at my home",
+            "house is burning",
+            "home is burning",
+            "shop on fire",
+            "electrical fire",
+            "heavy smoke",
+        ],
         "department": "Public Safety",
         "score": 98,
         "reasons": ["Immediate fire and life safety risk"],
@@ -292,6 +303,7 @@ def classify_and_prioritize(text: str) -> dict:
             "reasons": reasons,
             "source": "local",
             "issue_type": issue["type"],
+            "valid": True,
         }
 
     prompt = f"""
@@ -306,6 +318,7 @@ Assign a score from 0 to 100.
 Return valid JSON only, with no markdown fences and no extra explanation.
 Use this exact JSON shape:
 {{
+  "valid": true,
   "department": "Water",
   "priority": "HIGH",
   "score": 72,
@@ -320,6 +333,10 @@ Consider these factors when scoring:
 
 Complaint text:
 {text}
+
+If the text is meaningless gibberish or does not describe an understandable
+civic complaint, return "valid": false and use null for department, priority,
+and score. Otherwise return "valid": true.
 """
 
     try:
@@ -337,6 +354,20 @@ Complaint text:
         # Ensure the result has the required keys and valid values.
         if not isinstance(data, dict):
             raise ValueError("Gemini response was not a JSON object.")
+
+        if data.get("valid") is False:
+            reasons = data.get("reasons")
+            if not isinstance(reasons, list) or not reasons:
+                reasons = ["Complaint does not describe a meaningful civic issue"]
+            return {
+                "department": None,
+                "priority": None,
+                "score": None,
+                "reasons": reasons,
+                "source": "gemini",
+                "issue_type": None,
+                "valid": False,
+            }
 
         required = ["department", "priority", "score", "reasons"]
         for key in required:
@@ -361,6 +392,7 @@ Complaint text:
             "reasons": data["reasons"],
             "source": "gemini",
             "issue_type": None,
+            "valid": True,
         }
     except Exception:
         # Safe fallback so the app never crashes if Gemini output is malformed.
@@ -371,6 +403,7 @@ Complaint text:
             "reasons": ["Auto-fallback classification"],
             "source": "fallback",
             "issue_type": None,
+            "valid": True,
         }
 
 
